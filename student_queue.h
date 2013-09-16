@@ -7,21 +7,26 @@
 
 typedef struct StructProcessControlBlock
 {
-	long				processId;
-    long                reg1, reg2, reg3, reg4, reg5;
-    long                reg6, reg7, reg8, reg9;
+	INT32				process_id;
+	char				*process_name;
+	INT32				priority;
+	void				*context;								//pointer to context for the process
 	struct				StructProcessControlBlock				* nextPCB; 
-	void				*context; //pointer to context for the process
-	UINT16				*page_table_ptr;     // Location of the page table
-	INT16				page_table_len;    // Length of the page table
 } ProcessControlBlock;
 
 
 ProcessControlBlock		*CreateProcessControlBlock();
-BOOL					IsTimerQueueEmpty(ProcessControlBlock *, ProcessControlBlock *);
-void					AddToTimerQueue(ProcessControlBlock **, ProcessControlBlock **, ProcessControlBlock *);
-void					RemoveFromTimerQueue(ProcessControlBlock **, ProcessControlBlock **, ProcessControlBlock *);
-INT16					SizeTimerQueue(ProcessControlBlock *, ProcessControlBlock *);
-void					PrintTimerQueue(ProcessControlBlock *,ProcessControlBlock *);
-void					FreeFromTimerQueue(ProcessControlBlock *);
+ProcessControlBlock		*CreateProcessControlBlockWithData(char *process_name, void *starting_address, INT32 priority , INT32 process_id);
+BOOL					IsTimerQueueEmpty(ProcessControlBlock *head, ProcessControlBlock *tail);
+void					AddToTimerQueue(ProcessControlBlock **head, ProcessControlBlock **tail, ProcessControlBlock *pcb);
+void					RemoveFromTimerQueue(ProcessControlBlock **head, ProcessControlBlock **tail, ProcessControlBlock *removePCB);
+INT16					SizeTimerQueue(ProcessControlBlock *head, ProcessControlBlock *tail);
+void					PrintTimerQueue(ProcessControlBlock *head,ProcessControlBlock *tail);
+void					FreePCB(ProcessControlBlock *pcb);
 
+///* Linked List */
+ProcessControlBlock		*InsertLinkedListPID(ProcessControlBlock *head, ProcessControlBlock *pcb);
+BOOL					IsExistsProcessNameLinkedList(ProcessControlBlock *head, char *process_name);
+BOOL					IsExistsProcessIDLinkedList(ProcessControlBlock * head, INT32 process_id);
+ProcessControlBlock		*RemoveFromLinkedList(ProcessControlBlock *head, INT32 process_id);
+ProcessControlBlock		*RemoveLinkedList(ProcessControlBlock *head);

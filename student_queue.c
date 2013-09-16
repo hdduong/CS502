@@ -1,6 +1,7 @@
 #include				 <stdio.h>
 #include                 <stdlib.h>
 #include                 <memory.h>
+#include				 <string.h>
 
 #include				"student_queue.h"
 
@@ -24,7 +25,25 @@ ProcessControlBlock *CreateProcessControlBlock()
 	return pcb;
 }
 
+	
+ProcessControlBlock *CreateProcessControlBlockWithData(char *process_name, void *starting_address, INT32 priority, INT32 process_id)
+{
+	ProcessControlBlock *pcb;
 
+	pcb = (ProcessControlBlock*) malloc(sizeof(ProcessControlBlock));
+	if (pcb == NULL) return NULL;
+
+	pcb->process_name = strdup(process_name);
+	if (pcb->process_name == NULL) return NULL;
+
+	pcb->context = starting_address;
+	pcb->priority = priority;
+	pcb->process_id = process_id;
+	pcb->nextPCB = NULL;
+
+	return pcb;
+
+}
 
 BOOL IsTimerQueueEmpty(ProcessControlBlock *head, ProcessControlBlock *tail)
 {
@@ -53,15 +72,15 @@ void AddToTimerQueue(ProcessControlBlock **head, ProcessControlBlock **tail, Pro
 
 
 
-void RemoveFromTimerQueue(ProcessControlBlock **head, ProcessControlBlock **tail, ProcessControlBlock *removePCB)
+void RemoveFromTimerQueue(ProcessControlBlock **head, ProcessControlBlock **tail, ProcessControlBlock *removepcb)
 {
 	if (IsTimerQueueEmpty(*head,*tail)) 
 	{
 		return;
 	}
-	else if ( (*head == *tail) && (*head == removePCB)	) {				//head and tail not NULL. Only one element 
+	else if ( (*head == *tail) && (*head == removepcb)	) {				//head and tail not null. only one element 
 		*head = *tail = NULL;
-		FreeFromTimerQueue(removePCB);
+		FreePCB(removepcb);
 		return;
 	}
 	else { 
@@ -70,19 +89,19 @@ void RemoveFromTimerQueue(ProcessControlBlock **head, ProcessControlBlock **tail
 		ProcessControlBlock *prev = NULL;
 
 		while (tmp != NULL) {
-			if (tmp != removePCB) {
+			if (tmp != removepcb) {
 				prev = tmp;
 				tmp = tmp->nextPCB;
 			}
-			else {                                         // found removePCB
+			else {                                         // found removepcb
 				prev->nextPCB = tmp->nextPCB;
-				FreeFromTimerQueue(removePCB);
+				FreePCB(removepcb);
 			}
 		}
 		return;
 	}
 	// should not never get there
-	printf("@RemoveFromTimerQueue: Something wrong. \n");
+	printf("@removefromtimerqueue: something wrong. \n");
 	return;
 }
 
@@ -110,24 +129,130 @@ void PrintTimerQueue(ProcessControlBlock *head,ProcessControlBlock *tail)
 {
 	if (IsTimerQueueEmpty(head,tail))
 	{
-		//printf("@PrintPCBQueue: NULL \n");
+		//printf("@printpcbqueue: null \n");
 		return;
 	}
 	else
 	{
-		//printf("@PrintPCBQueue: %d ",head->processId);
+		//printf("@printpcbqueue: %d ",head->processid);
 		while (head != tail)
 		{
 			head = head->nextPCB;
-			printf("%d ",head->processId);
+			printf("%d ",head->process_id);
 		}
 		printf("\n");
 	}
 
 }
 
-void FreeFromTimerQueue(ProcessControlBlock *pcb)
+void FreePCB(ProcessControlBlock *pcb)
 {
-	if (pcb != NULL)
+	if (pcb != NULL) {
+		free(pcb->process_name);
 		free(pcb);
+	}
+}
+
+
+//
+////-----------------------------------------------------//
+//
+//// Insert by increase of PID
+ProcessControlBlock		*InsertLinkedListPID(ProcessControlBlock *head, ProcessControlBlock *pcb) 
+{
+	ProcessControlBlock *tmp = NULL;
+	ProcessControlBlock *prev = NULL;
+
+	if (head == NULL)
+		return pcb;
+	
+	if (pcb->process_id < head->process_id) {
+		pcb->nextPCB = head;
+		return pcb;
+	}
+
+	tmp = head;
+	while ( (tmp != NULL) && (tmp->process_id < pcb->process_id) ) {
+		prev = tmp;
+		tmp = tmp->nextPCB;
+	}
+
+	prev->nextPCB = pcb;
+	pcb->nextPCB = tmp;
+
+	return head;
+}
+
+BOOL	IsExistsProcessNameLinkedList(ProcessControlBlock *head, char* process_name)
+{
+	ProcessControlBlock *tmp = head;
+	if (head == NULL)
+		return FALSE;
+
+	while (tmp!= NULL) {
+		if (strcmp(tmp->process_name, process_name) == 0)
+			return TRUE;
+
+		tmp = tmp->nextPCB;
+	}
+
+	return FALSE;
+}
+
+
+
+BOOL	IsExistsProcessIDLinkedList(ProcessControlBlock *head, INT32 process_id)
+{
+	ProcessControlBlock *tmp = head;
+	if (head == NULL)
+		return FALSE;
+
+	while (tmp!= NULL) {
+		if (tmp->process_id == process_id)
+			return TRUE;
+
+		tmp = tmp->nextPCB;
+	}
+
+	return FALSE;
+}
+
+
+// assume that process_id exists
+ProcessControlBlock *RemoveFromLinkedList(ProcessControlBlock *head, INT32 process_id)
+{
+	ProcessControlBlock *tmp = head;
+	ProcessControlBlock *prev = NULL;
+
+	if  (head == NULL)
+		return;
+	
+	if (head->process_id == process_id) {                            //remove at head
+		FreePCB(head);
+		return NULL;
+	}
+	
+	while ( (tmp != NULL) &&   (tmp->process_id != process_id) )  {
+				prev = tmp;
+				tmp = tmp->nextPCB;
+	}                                  
+	
+	if (tmp != NULL) {
+		prev->nextPCB = tmp->nextPCB;
+		FreePCB(tmp);
+	}
+	return;
+	
+}
+
+
+ProcessControlBlock * RemoveLinkedList(ProcessControlBlock *head) 
+{
+	ProcessControlBlock *tmp = head;
+	while(head!=NULL) {
+		head = head->nextPCB;
+		FreePCB(tmp);
+	}
+
+	return NULL;
 }
