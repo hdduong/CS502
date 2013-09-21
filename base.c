@@ -26,6 +26,7 @@
 #include             "syscalls.h"
 #include             "protos.h"
 #include             "string.h"
+#include              <stdlib.h>
 
 #include			 "student_queue.h"
 #include			 "student_global.h"
@@ -43,15 +44,19 @@ char                 *call_names[] = { "mem_read ", "mem_write",
                             "send     ", "receive  ", "disk_read",
                             "disk_wrt ", "def_sh_ar" };
 
-ProcessControlBlock			*TimerQueueHead, *TimerQueueTail; // TimerQueue 
-ProcessControlBlock			*PCB_Current_Process;
-INT32						global_process_id = 0;
-ProcessControlBlock			*ListHead;
 
 /**************************** <hdduong ********************************/
-void	os_make_process(char* testCase);
+INT32						global_process_id = 0;													// keep track of process_id
+ProcessControlBlock			*TimerQueueHead;														// TimerQueue 
+ProcessControlBlock			*ReadyQueueHead;														// ReadyQueue
+ProcessControlBlock			*PCB_Transfer;															// point to current running PCB
+ProcessControlBlock			*ListHead;																// PCB table
+
+
+void	os_create_process(char* process_name, void	*starting_address, INT32 priority, INT32 process_id, INT32 *error);
+INT32	check_legal_process(char* process_name, INT32 initial_priority);							// check Legal process before create process
 void	start_timer(long * sleepTime);
-INT32	is_process_name_exists(char* process_name);
+void	make_ready_to_run(ProcessControlBlock **ReadyQueueHead, ProcessControlBlock *pcb);			// Insert into readque
 
 /************************** hdduong> **********************************/
 
@@ -66,30 +71,38 @@ void    interrupt_handler( void ) {
     INT32              device_id;
     INT32              status;
     INT32              Index = 0;
-
+	INT32			   Time;
+	ProcessControlBlock	*tmp = TimerQueueHead;								// check front of time queue head
 
 	printf(" .... Start interrupt_handler! ...\n");
-	printf(" .... Queue Size: %d ... \n",SizeTimerQueue(TimerQueueHead,TimerQueueTail));
-	
+	printf(" .... TimerQueue Size: %d ... \n",SizeQueue(TimerQueueHead));
+	printf(" .... ReadyQueue Size: %d ... \n",SizeQueue(ReadyQueueHead));
 
 
     // Get cause of interrupt
-    MEM_READ(Z502InterruptDevice, &device_id );
+    CALL( MEM_READ(Z502InterruptDevice, &device_id ) );
 
     // Set this device as target of our query
-    MEM_WRITE(Z502InterruptDevice, &device_id );
+    CALL ( MEM_WRITE(Z502InterruptDevice, &device_id ) );
 
 	// Now read the status of this device
-    MEM_READ(Z502InterruptStatus, &status );
+    CALL( MEM_READ(Z502InterruptStatus, &status ) );
 
 	if ( device_id == TIMER_INTERRUPT && status == ERR_SUCCESS ) {
-		RemoveFromTimerQueue(&TimerQueueHead, &TimerQueueTail,PCB_Current_Process);
-		printf(" .... Queue Size: %d ... \n",SizeTimerQueue(TimerQueueHead,TimerQueueTail));
+		MEM_READ(Z502ClockStatus, &Time);									// read current time and compare to front of Timer queue
+							
+		while ( (tmp!= NULL) && (tmp->wakeup_time <= Time) ) {
+			PCB_Transfer = DeQueue(&TimerQueueHead);						// take off front Timer queue
+			CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer) );		// put in the end of Ready Queue
+			tmp = TimerQueueHead;											// transfer until front Timer Queue > current time
+		}
 	}
 
 	// Clear out this device - we're done with it
     MEM_WRITE(Z502InterruptClear, &Index );
-
+	
+	printf(" .... TimerQueue Size: %d ... \n",SizeQueue(TimerQueueHead));
+	printf(" .... ReadyQueue Size: %d ... \n",SizeQueue(ReadyQueueHead));
 	printf( " ... End interrupt_handler! ...\n");
 
 }                                       /* End of interrupt_handler */
@@ -132,10 +145,15 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
     static INT16        do_print = 10;
     INT32               Time;
 	short               i;
-	INT32				create_priority;					// read argument 2 - prioirty of CREATE_PROCESS
-	long				SleepTime;
-	ProcessControlBlock *newPCB;				// create new process
-	INT32				terminate_arg;			// terminate argument of TERMINATE_PROCESS
+	INT32				create_priority;			 // read argument 2 - prioirty of CREATE_PROCESS
+	long				SleepTime;					 // using in SYSNUM_SLEEP
+	ProcessControlBlock *newPCB;					 // create new process
+	INT32				terminate_arg;				 // terminate argument of TERMINATE_PROCESS
+	char				*process_name_arg = NULL;	 // process name argument of GET_PROCESS_ID, CREATE_PROCESS
+	INT32				process_error_arg;			// process error check for GET_PROCESS_ID, CREATE_PROCESS
+	INT32				process_id_arg;				 // process_id returns in GET_PROCESS_ID, CREATE_PROCESS
+	//INT32				MAX_EXCEED_PROCESSES = 1000; // Maximum created processes
+	void				*starting_address;			 // starting address of rountine in CREATE_PROCESS
 
 
     call_type = (short)SystemCallData->SystemCallNumber;
@@ -159,7 +177,6 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 			*(INT32 *)SystemCallData->Argument[0] = Time;
             break;
        
-		// System sleep test 1a
 		case SYSNUM_SLEEP:
 			SleepTime = (INT32) SystemCallData->Argument[0];
 			start_timer(&SleepTime);
@@ -170,19 +187,26 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 			//CALL(Z502Halt());
 			terminate_arg =  (INT32) SystemCallData->Argument[0];		//get process_id
 
-			if (terminate_arg == -1) {                         //terminate self
+			if (terminate_arg == -1) {									//terminate self
+				//Time
+				global_process_id--;
+				DeleteQueue(TimerQueueHead);							// release all heap memory before quit
+				DeleteQueue(ReadyQueueHead);
 				CALL(Z502Halt());
-				// global_process_id
+				
 			}
-			else if (terminate_arg == -2) {                    //terminate self + children
+			else if (terminate_arg == -2) {								//terminate self + children
 				// global_process_id
+				DeleteQueue(TimerQueueHead);							// release all heap memory before quit
+				DeleteQueue(ReadyQueueHead);
+				CALL(Z502Halt());
 			}
-			else  {                                           // terminate a process
+			else  {														// terminate a process
 				// test1b remove from LIST
 				if ( !IsExistsProcessIDLinkedList(ListHead,  terminate_arg) ) {    //invalid process_id
 					*(INT32 *)SystemCallData->Argument[1] = PROCESS_TERMINATE_INVALID_PROCESS_ID;
 				}
-				else {                                        // remove from List
+				else {													 // remove from List
 					ListHead = RemoveFromLinkedList(ListHead,terminate_arg);
 					*(INT32 *)SystemCallData->Argument[1] = ERR_SUCCESS;  //success
 					global_process_id--;
@@ -193,36 +217,37 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
         
 		// create new process
 		case SYSNUM_CREATE_PROCESS:
-			// check legal process first
-			create_priority = (INT32)SystemCallData->Argument[2];
-			if(	create_priority <= 0	) {							  // ILLEGAL Priority
-				*(INT32 *)SystemCallData->Argument[4] = PROCESS_CREATED_ILLEGAL_PRIORITY;
-			}
-			else if ( IsExistsProcessNameLinkedList(ListHead,(char *) SystemCallData->Argument[0]) ) {   //already process_name
-				*(INT32 *)SystemCallData->Argument[4] = PROCESS_CREATED_ERROR_SAME_NAME;
-			}
-			else {                                        
-				global_process_id++;					// If CREATE_PROCESS called, then increase global_process_id
-				newPCB = CreateProcessControlBlockWithData( (char*) SystemCallData->Argument[0],
-															(void*) SystemCallData->Argument[1],
-															(INT32) SystemCallData->Argument[2],
-															global_process_id);
-				if (newPCB == NULL) {                    // run out of resources
-					ListHead = RemoveLinkedList(ListHead);
-					global_process_id = 0;               // rest process_id counter
-					*(INT32 *)SystemCallData->Argument[4] = PROCESS_CREATED_NOT_ENOUGH_MEMORY;
-					return;
-				}
-				*(INT32 *)SystemCallData->Argument[3] = global_process_id;
-				*(INT32 *)SystemCallData->Argument[4] = PROCESS_CREATED_SUCCESS;
+			process_name_arg = strdup((char *)SystemCallData->Argument[0]);								// copy data and malloc
+			starting_address = (void*) SystemCallData->Argument[1];										// get address of rountine from argument
+			create_priority = (INT32)SystemCallData->Argument[2];										// get priority of process through argument 	
 
-				ListHead = InsertLinkedListPID(ListHead,newPCB);
-			}
+			CALL(os_create_process(process_name_arg,starting_address, create_priority, &process_id_arg, &process_error_arg));  // create process and include checking
+			
+			*(INT32 *)SystemCallData->Argument[3] = process_id_arg;										// return created process id if success
+			*(INT32 *)SystemCallData->Argument[4] = process_error_arg;									// error or success return here
+			
+			free(process_name_arg);																		// free after malloc
 			break;
 		
 		//get process id
 		case SYSNUM_GET_PROCESS_ID:
-		
+			process_name_arg = (char *)SystemCallData->Argument[0];
+			if (strcmp(process_name_arg,"") == 0) {														// get self process
+				//*(INT32 *)SystemCallData->Argument[1] = PCB_Current_Process->process_id;				//get data from Current_Process_PCB 
+				*(INT32 *)SystemCallData->Argument[2] = PROCESS_ID_EXIST;
+			}
+			else 
+			{
+				process_id_arg = GetProcessID(ListHead,process_name_arg);
+				if (process_id_arg == PROCESS_ID_NOT_VALID) {											// no process exits
+					*(INT32 *)SystemCallData->Argument[2] = PROCESS_ID_NOT_EXIST;
+				}
+				else {
+					*(INT32 *)SystemCallData->Argument[1] = process_id_arg;
+					*(INT32 *)SystemCallData->Argument[2] = PROCESS_ID_EXIST;
+				}
+
+			}
 			break;
 		
 		default:  
@@ -244,6 +269,10 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 void    osInit( int argc, char *argv[]  ) {
     void                *next_context;
     INT32               i;
+	INT32				created_process_error;
+	INT32				created_process_id;
+	INT32				test_case_prioirty = 1;
+	
 
     /* Demonstrates how calling arguments are passed thru to here       */
 
@@ -267,60 +296,129 @@ void    osInit( int argc, char *argv[]  ) {
     }                   /* This routine should never return!!           */
 
     /*  This should be done by a "os_make_process" routine, so that
-        test0 runs on a process recognized by the operating system.    */
-	/*
-    Z502MakeContext( &next_context, (void *)test0, USER_MODE );
-    Z502SwitchContext( SWITCH_CONTEXT_KILL_MODE, &next_context );
-	*/
+        test0 runs on a process recognized by the operating system.  
 
-	/* Start of test1a */
-	/*
-    Z502MakeContext( &next_context, (void *)test1a, USER_MODE );
-    Z502SwitchContext( SWITCH_CONTEXT_KILL_MODE, &next_context );
-	*/
-	//os_make_process("test0");
-	//os_make_process("test1a");
-	os_make_process("test1b");
+    Z502MakeContext( &next_context, (void *)test0, USER_MODE );
+    Z502SwitchContext( SWITCH_CONTEXT_KILL_MODE, &next_context );		*/
+	
+
+	//----------------------------------------------------------//
+	//		Choose to run test from command line				//
+	//----------------------------------------------------------//
+	if (( argc > 1 ) && ( strcmp( argv[1], "test0" ) == 0 ) ) {
+		CALL( os_create_process("test0",(void*) test1a,test_case_prioirty, &created_process_id, &created_process_error) );
+    } 
+	else if (( argc > 1 ) && ( strcmp( argv[1], "test1a" ) == 0 ) ) {
+		CALL( os_create_process("test1a",(void*) test1a,test_case_prioirty, &created_process_id, &created_process_error) );
+	}
+	else if (( argc > 1 ) && ( strcmp( argv[1], "test1b" ) == 0 ) ) {
+		CALL( os_create_process("test1a",(void*) test1b,test_case_prioirty, &created_process_id, &created_process_error) );
+	}
+
+
+	//----------------------------------------------------------//
+	//				Run test manuallly			    			//
+	//----------------------------------------------------------//
+
+	//CALL(os_create_process("test0",(void*) test0,test_case_prioirty, &created_process_id, &created_process_error));
+	//Z502MakeContext( &next_context, (void*) test0, USER_MODE );	
+	//Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
+
+	CALL( os_create_process("test1a",(void*) test1a,test_case_prioirty, &created_process_id, &created_process_error) );
+	Z502MakeContext( &next_context, (void*) test1a, USER_MODE );	
+	Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
+
+	/*CALL ( os_create_process("test1b",(void*) test1b,test_case_prioirty, &created_process_id, &created_process_error) );
+	Z502MakeContext( &next_context, (void*) test1b, USER_MODE );	
+	Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );*/
+
 }                                               // End of osInit
 
 
-void os_make_process(char *testCase) 
+void	os_create_process(char* process_name, void	*starting_address, INT32 priority, INT32 *process_id, INT32 *error)
 {
-	 void *next_context;
-	 if (strcmp(testCase,"test0") == 0) {
-		Z502MakeContext( &next_context, (void *)test0, USER_MODE );
-		Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
+	 void						*next_context;
+	 INT32						legal_process;
+	 ProcessControlBlock		*newPCB;
+	 
+
+	 if ( (legal_process = check_legal_process(process_name,priority)) != PROCESS_LEGAL) {    // if not legal write error then return
+		 *error = legal_process;
+		 return;
 	 }
 
-	 else if (strcmp(testCase,"test1a") == 0) {
-		 PCB_Current_Process = CreateProcessControlBlock(); // create the PCB
-		 PCB_Current_Process->context = (void*)test1a; // fill in data for PCB
+	 global_process_id++;																	 // if legal processs
+	 newPCB = CreateProcessControlBlockWithData( (char*) process_name,						 // create new pcb
+												 (void*) starting_address,
+												 priority,
+												 global_process_id);
 
-		 Z502MakeContext( &next_context, (void*)test1a, USER_MODE ); //ask the hardware for a context
-		 Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
-	 }
+	if (newPCB == NULL) {																	// run out of resources
+		*error = PROCESS_CREATED_NOT_ENOUGH_MEMORY;
+		return;
+	}
+	  
+	newPCB->wakeup_time = 0;															  // add more field for newPCB if successfully created
+	newPCB->state = PROCESS_STATE_CREATE;
+
+	*process_id = global_process_id;														// prepare for return values
+	*error = PROCESS_CREATED_SUCCESS;
+	ListHead = InsertLinkedListPID(ListHead,newPCB);										// insert new pcb to pcb table
+
+	make_ready_to_run(&ReadyQueueHead,newPCB);												// whenever new process created, put into ready queue
 	
-	 else if (strcmp(testCase,"test1b") == 0) {
-		 //PCB_Current_Process = CreateProcessControlBlock(); // create the PCB
-		 //PCB_Current_Process->context = (void*)test1b; // fill in data for PCB
-
-		 Z502MakeContext( &next_context, (void*)test1b, USER_MODE ); //ask the hardware for a context
-		 Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
-	 }
 }
 
 
-void start_timer(long * sleepTime) 
-{
-	//printf( " .... Start start_timer! ....\n");
-	//pcb_Current_Process->context = (void*)start_timer;
 
+
+INT32	check_legal_process(char* process_name, INT32 initial_priority) 
+{
+	INT32	MAX_EXCEED_PROCESSES = 20;
+
+	if(	initial_priority <= 0	) {															// ILLEGAL Priority
+		return PROCESS_CREATED_ILLEGAL_PRIORITY;
+	}
+	else if ( IsExistsProcessNameLinkedList(ListHead, process_name) ) {						//already process_name
+		return PROCESS_CREATED_ERROR_SAME_NAME;
+	}
+	else if ( SizeLinkedListPID(ListHead) >= MAX_EXCEED_PROCESSES) {
+		return PROCESS_CREATED_MAX_EXCEED;
+	}
+	return PROCESS_LEGAL;
+}
+
+void start_timer(long *sleepTime) 
+{
+	INT32		Time;														// get current time assigned to 
+	INT32		Timer_Status;
+	ProcessControlBlock *prev_Head = TimerQueueHead;						// to get timer of HeadTimerQueue
+
+	MEM_READ (Z502ClockStatus, &Time);								        // get current time
+	MEM_READ (Z502TimerStatus, &Timer_Status);
 	
-	AddToTimerQueue(&TimerQueueHead,&TimerQueueTail,PCB_Current_Process);
-	CALL(MEM_WRITE( Z502TimerStart, &*sleepTime));
-	//printf( " .... Start Z502Idle! ....\n");
+	PCB_Transfer = DeQueue(&ReadyQueueHead)  ;								// Take from ready queue
+	PCB_Transfer->wakeup_time = Time + (INT32) *sleepTime;					// Set absolute time to PCB
+	PCB_Transfer->state	= PROCESS_STATE_SLEEP;
+
+	CALL(AddToTimerQueue(&TimerQueueHead, PCB_Transfer) );					// then Add to Timer queue
+
+	if (Timer_Status == DEVICE_FREE) {                                      // nothing set the timer
+		MEM_WRITE( Z502TimerStart, &*sleepTime );							// go ahead and set timer
+	}
+	else if  (Timer_Status == DEVICE_IN_USE) {								// a process in front of set Timer before
+		if (prev_Head->wakeup_time > PCB_Transfer->wakeup_time) {           // comopare time. Another way is compare pointer address
+			MEM_WRITE( Z502TimerStart, &*sleepTime );
+		}
+		else {}																// do not hav eto change anything
+	}
 	
+		
 	Z502Idle();
-	//printf( " .... End Z502Idle! ....\n");
-	//printf( " .... End start_timer! ....\n");
+	
+}
+
+void make_ready_to_run(ProcessControlBlock **head_of_ready, ProcessControlBlock *pcb) {
+	pcb->state = PROCESS_STATE_READY;
+	AddToReadyQueue(&ReadyQueueHead,pcb);
 }

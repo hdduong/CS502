@@ -152,14 +152,15 @@ void test1a(void) {
 
 void test1b(void) {
 	static char process_name[16];
-
+	//INT32	MAX_EXCEED_PROCESSES = 1000;
 
 	// Try to create a process with an illegal priority.
-	printf("This is Release %s:  Test 1b\n", CURRENT_REL);
+	//printf("This is Release %s:  Test 1b\n", CURRENT_REL);
+	
 	CREATE_PROCESS("test1b_a", test1x, ILLEGAL_PRIORITY, &Z502_REG1,
 			&Z502_REG9);
 	ErrorExpected(Z502_REG9, "CREATE_PROCESS");
-
+	
 	
 	// Create two processes with same name - 1st succeeds, 2nd fails
 	// Then terminate the process that has been created
@@ -175,8 +176,10 @@ void test1b(void) {
 	// Loop until an error is found on the create_process.
 	// Since the call itself is legal, we must get an error
 	// because we exceed some limit.
+	
 	Z502_REG9 = ERR_SUCCESS;
 	while (Z502_REG9 == ERR_SUCCESS) {
+	//while ( (Z502_REG9 == ERR_SUCCESS) &&  (Z502_REG3 < MAX_EXCEED_PROCESSES) ) {
 		Z502_REG3++; // Generate next unique program name 
 		sprintf(process_name, "Test1b_%ld", Z502_REG3);
 		printf("Creating process \"%s\"\n", process_name);
@@ -188,7 +191,8 @@ void test1b(void) {
 	//  So the OS should have given us an error
 	ErrorExpected(Z502_REG9, "CREATE_PROCESS");
 	printf("%ld processes were created in all.\n", Z502_REG3);
-	/*
+	
+	
 	//      Now test the call GET_PROCESS_ID for ourselves
 	GET_PROCESS_ID("", &Z502_REG2, &Z502_REG9);     // Legal
 	SuccessExpected(Z502_REG9, "GET_PROCESS_ID");
@@ -203,7 +207,7 @@ void test1b(void) {
 	// Try GET_PROCESS_ID on a non-existing process
 	GET_PROCESS_ID("bogus_name", &Z502_REG1, &Z502_REG9); // Illegal
 	ErrorExpected(Z502_REG9, "GET_PROCESS_ID");
-	*/
+	
 	GET_TIME_OF_DAY(&Z502_REG4);
 	printf("Test1b, PID %ld, Ends at Time %ld\n", Z502_REG2, Z502_REG4);
 	TERMINATE_PROCESS(-2, &Z502_REG9)
