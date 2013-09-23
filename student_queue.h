@@ -26,6 +26,8 @@ INT32					SizeQueue(ProcessControlBlock *head);
 void					PrintQueue(ProcessControlBlock *head);
 void					FreePCB(ProcessControlBlock *pcb);
 void					DeleteQueue(ProcessControlBlock *head);
+BOOL					IsExistsProcessIDQueue(ProcessControlBlock *head, INT32 process_id);
+void					RemoveProcessFromQueue(ProcessControlBlock **head, INT32 process_id); 
 
 ///* Linked List */
 ProcessControlBlock		*InsertLinkedListPID(ProcessControlBlock *head, ProcessControlBlock *pcb);

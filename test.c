@@ -152,10 +152,9 @@ void test1a(void) {
 
 void test1b(void) {
 	static char process_name[16];
-	//INT32	MAX_EXCEED_PROCESSES = 1000;
 
 	// Try to create a process with an illegal priority.
-	//printf("This is Release %s:  Test 1b\n", CURRENT_REL);
+	printf("This is Release %s:  Test 1b\n", CURRENT_REL);
 	
 	CREATE_PROCESS("test1b_a", test1x, ILLEGAL_PRIORITY, &Z502_REG1,
 			&Z502_REG9);
@@ -230,10 +229,11 @@ void test1b(void) {
 
  **************************************************************************/
 #define         PRIORITY1C              10
+// #define         PRIORITY1C              1						//hdduong
 
 void test1c(void) {
 	static long   sleep_time = 1000;
-
+	//static long   sleep_time = 10000;								// hdduong
 	printf("This is Release %s:  Test 1c\n", CURRENT_REL);
 	CREATE_PROCESS("test1c_a", test1x, PRIORITY1C, &Z502_REG1, &Z502_REG9);
 	SuccessExpected(Z502_REG9, "CREATE_PROCESS");
@@ -241,7 +241,7 @@ void test1c(void) {
 	CREATE_PROCESS("test1c_b", test1x, PRIORITY1C, &Z502_REG2, &Z502_REG9);
 
 	CREATE_PROCESS("test1c_c", test1x, PRIORITY1C, &Z502_REG3, &Z502_REG9);
-
+	
 	CREATE_PROCESS("test1c_d", test1x, PRIORITY1C, &Z502_REG4, &Z502_REG9);
 
 	CREATE_PROCESS("test1c_e", test1x, PRIORITY1C, &Z502_REG5, &Z502_REG9);
@@ -1128,6 +1128,8 @@ void test1m(void) {
  **************************************************************************/
 
 #define         NUMBER_OF_TEST1X_ITERATIONS     10
+
+//#define         NUMBER_OF_TEST1X_ITERATIONS     1					//hdduong
 
 void test1x(void) {
 	long   RandomSleep = 17;
