@@ -64,6 +64,10 @@ void	terminate_proccess_id(INT32 process_id, INT32 *process_error_return);						
 void	make_ready_to_run(ProcessControlBlock **ReadyQueueHead, ProcessControlBlock *pcb);			// Insert into readque
 void	set_pcb_current_running_process(char* process_name, void	*starting_address, INT32 priority, INT32 *process_id);		//set current pcb process for switch context
 void	dispatcher(INT32 *destroy_context);
+void	please_charge_hardware_time() {};															// increase time function, used in infinite loop
+void	process_printer(char* action, INT32 target_process_id, INT32 running_process_id, // process_id or target = -1
+						INT32 waiting_mode,INT32 ready_mode, INT32 suspended_mode, INT32 swapped_mode,// means does not print out in state printer
+						INT32 terminated_process_id, INT32 new_process_id);
 /************************** hdduong> **********************************/
 
 
@@ -81,9 +85,9 @@ void    interrupt_handler( void ) {
 	INT32			   *new_update_time;										// for Relative time from new head after put into Ready queue
 	ProcessControlBlock	*tmp = TimerQueueHead;								// check front of time queue head
 
-	printf(" .... Start interrupt_handler TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... Start interrupt_handler Timer Queue! ..."); CALL( PrintQueue(TimerQueueHead) );
-	printf(" .... Start interrupt_handler ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Start interrupt_handler Ready Queue! ..."); CALL( PrintQueue(ReadyQueueHead) );
-	
+	//printf(" .... Start interrupt_handler TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... Start interrupt_handler Timer Queue! ..."); CALL( PrintQueue(TimerQueueHead) );
+	//printf(" .... Start interrupt_handler ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Start interrupt_handler Ready Queue! ..."); CALL( PrintQueue(ReadyQueueHead) );
+	 process_printer("S_Ready",-1,-1,1,1,-1,-1,-1,-1);
 
     // Get cause of interrupt
     CALL( MEM_READ(Z502InterruptDevice, &device_id ) );
@@ -96,11 +100,15 @@ void    interrupt_handler( void ) {
 
 	if ( device_id == TIMER_INTERRUPT && status == ERR_SUCCESS ) {
 		MEM_READ(Z502ClockStatus, &Time);									// read current time and compare to front of Timer queue
-		printf("... interrupt_handler current_time....%d \n",Time);
+		//printf("... interrupt_handler current_time....%d \n",Time);
 
 		while ( (tmp!= NULL) && (tmp->wakeup_time <= Time) ) {
 			PCB_Transfer_Timer_To_Ready = DeQueue(&TimerQueueHead);						// take off front Timer queue
 			
+			/*if (PCB_Current_Running_Process != NULL) {
+				process_printer("Ready",PCB_Transfer_Timer_To_Ready->process_id,PCB_Current_Running_Process->process_id,1,1,-1,-1,-1,-1);
+			}*/
+
 			CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_Timer_To_Ready) );		// put in the end of Ready Queue
 			
 			tmp = TimerQueueHead;											// transfer until front Timer Queue > current time
@@ -113,7 +121,7 @@ void    interrupt_handler( void ) {
 			MEM_READ(Z502ClockStatus, &Time);			
 			*new_update_time = tmp->wakeup_time - Time;							// there: tmp== NULL or tmp->wakeup_time > Time
 			MEM_WRITE(Z502TimerStart, new_update_time);						// set timer based on new timer queue head
-			printf("...interrupt_handler set timer hardware %d....\n", *new_update_time);
+			//printf("...interrupt_handler set timer hardware %d....\n", *new_update_time);
 			free(new_update_time);
 		}
 	}
@@ -121,9 +129,9 @@ void    interrupt_handler( void ) {
 	// Clear out this device - we're done with it
     MEM_WRITE(Z502InterruptClear, &Index );
 	
-
-	printf(" .... Ending interrupt_handler TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... Ending interrupt_handler Timer Queue! ..."); CALL( PrintQueue(TimerQueueHead) );
-	printf(" .... Ending interrupt_handler ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Ending interrupt_handler Ready Queue! ..."); CALL( PrintQueue(ReadyQueueHead) );
+	 process_printer("E_Ready",-1,-1,1,1,-1,-1,-1,-1);
+	//printf(" .... Ending interrupt_handler TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... Ending interrupt_handler Timer Queue! ..."); CALL( PrintQueue(TimerQueueHead) );
+	//printf(" .... Ending interrupt_handler ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Ending interrupt_handler Ready Queue! ..."); CALL( PrintQueue(ReadyQueueHead) );
 
 }                                       /* End of interrupt_handler */
 /************************************************************************
@@ -214,15 +222,16 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 																			PCB_Current_Running_Process->priority,
 																			PCB_Current_Running_Process->process_id);					
 				*(INT32 *)SystemCallData->Argument[1] = process_error_arg;
-				printf("... Terminating PID: %d...\n",PCB_Current_Running_Process->process_id);
+				/*printf("... Terminating PID: %d...\n",PCB_Current_Running_Process->process_id);
 				printf(" .... Terminate TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... Terminate Timer Queue! ..."); CALL( PrintQueue(TimerQueueHead) );
-				printf(" .... Terminate ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Terminate Ready Queue! ..."); CALL( PrintQueue(ReadyQueueHead) );
+				printf(" .... Terminate ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Terminate Ready Queue! ..."); CALL( PrintQueue(ReadyQueueHead) );*/
+				process_printer("Termint",-1,-1,1,1,-1,-1,-1,-1);
 				flag_switch_and_destroy = TRUE;
 
 				if ( IsQueueEmpty(ReadyQueueHead) ) {
 					MEM_WRITE(Z502TimerStart, &generate_interrupt);	
 					MEM_READ( Z502ClockStatus, &Time );
-					printf(" .... Terminate Set Clock Size: %d  at %d ... ",generate_interrupt,Time);
+					//printf(" .... Terminate Set Clock Size: %d  at %d ... ",generate_interrupt,Time);
 					flag_switch_and_destroy = TRUE;
 					//Z502Idle();
 
@@ -230,12 +239,12 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 
 				dispatcher(&flag_switch_and_destroy);							//try to switch if 
 
-				while(loop_wait_fill_ReadyQueue) {
-						if (!IsQueueEmpty(ReadyQueueHead)) {
-							loop_wait_fill_ReadyQueue = FALSE;
-							dispatcher(&flag_switch_and_destroy);
-						}
-						CALL();
+				while(loop_wait_fill_ReadyQueue) {								// loop until something filled in ready queue
+						if (!IsQueueEmpty(ReadyQueueHead)) {                    // fix the error with Ready queue is empty because of removing
+							loop_wait_fill_ReadyQueue = FALSE;                  // but cannot switch to another context
+							dispatcher(&flag_switch_and_destroy);				// switch to other contexts
+						}														// loop_wait_fill_ReadyQueue will be changed to FALSE in dispatcher if TRUE;
+						CALL(please_charge_hardware_time);						// recharge the time	
 				}
 				
 				
@@ -395,9 +404,10 @@ void	os_create_process(char* process_name, void	*starting_address, INT32 priorit
 	 process_name_print = (char*) malloc(strlen(process_name)  + 1);
 	 strcpy(process_name_print,process_name);
 	 process_name_print[strlen(process_name)] = '\0';
-	 printf("... Start os_create_process %s...", process_name_print); 
-	 printf(" .... TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... Timer Queue! ...\n"); CALL( PrintQueue(TimerQueueHead) );
-	 printf(" .... ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Ready Queue! ...\n"); CALL( PrintQueue(ReadyQueueHead) );
+	 //printf("... Start os_create_process %s...", process_name_print); 
+	 //printf(" .... TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... Timer Queue! ...\n"); CALL( PrintQueue(TimerQueueHead) );
+	 //printf(" .... ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Ready Queue! ...\n"); CALL( PrintQueue(ReadyQueueHead) );
+	 process_printer("S_Create",-1,-1,1,1,-1,-1,-1,-1);
 
 	 if ( (legal_process = check_legal_process(process_name,priority)) != PROCESS_LEGAL) {    // if not legal write error then return
 		 *error = legal_process;
@@ -441,10 +451,15 @@ void	os_create_process(char* process_name, void	*starting_address, INT32 priorit
 	}
 
 
-	printf("... ending os create process %s...", process_name_print);	
+	//printf("... ending os create process %s...", process_name_print);	
 	free(process_name_print);
-	printf(" .... TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... Timer Queue! ..\n"); CALL( PrintQueue(TimerQueueHead) );
-	printf(" .... ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Ready Queue! ...\n");CALL( PrintQueue(ReadyQueueHead) );
+	process_printer("E_Create",-1,-1,1,1,-1,-1,-1,-1);
+	//printf(" .... TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... Timer Queue! ..\n"); CALL( PrintQueue(TimerQueueHead) );
+	//printf(" .... ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Ready Queue! ...\n");CALL( PrintQueue(ReadyQueueHead) );
+
+	//if (PCB_Current_Running_Process != NULL) {													// at least one process created
+	//	process_printer("Create",newPCB->process_id,PCB_Current_Running_Process->process_id,1,1,-1,-1,-1,newPCB->process_id);
+	//}
 }
 
 
@@ -475,9 +490,9 @@ void start_timer(long *sleepTime)
 	BOOL		loop_wait_ReadyQueue_filled = TRUE;
 	ProcessControlBlock *prev_Head = TimerQueueHead;						// to get timer of HeadTimerQueue
 
-
-	 printf(" .... Start start_timer TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... Timer Queue! ..."); CALL( PrintQueue(TimerQueueHead) );
-	 printf(" .... Start start_timer ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Ready Queue! ..."); CALL( PrintQueue(ReadyQueueHead) );
+	process_printer("S_Sleep",-1,-1,1,1,-1,-1,-1,-1);
+	 //printf(" .... Start start_timer TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... Timer Queue! ..."); CALL( PrintQueue(TimerQueueHead) );
+	 //printf(" .... Start start_timer ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Ready Queue! ..."); CALL( PrintQueue(ReadyQueueHead) );
 
 	MEM_READ (Z502ClockStatus, &Time);								        // get current time
 	MEM_READ (Z502TimerStatus, &Timer_Status);
@@ -486,38 +501,43 @@ void start_timer(long *sleepTime)
 		if (!IsQueueEmpty(ReadyQueueHead)) {                                // z502Idle() here throw error otherwise
 			loop_wait_ReadyQueue_filled = FALSE;
 		}
+		//CALL(please_charge_hardware_time);									// recharge the time	
 	}
 	
+	//if (PCB_Current_Running_Process != NULL) {
+	//	process_printer("Wait",PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->process_id,1,1,-1,-1,-1,-1);
+	//}
+
 	PCB_Transfer_Ready_To_Timer = DeQueue(&ReadyQueueHead)  ;								// Take from ready queue
 	PCB_Transfer_Ready_To_Timer->wakeup_time = Time + (INT32) (*sleepTime);					// Set absolute time to PCB
 	PCB_Transfer_Ready_To_Timer->state	= PROCESS_STATE_SLEEP;
 
-	printf("... start_timer current time:%d...\n",Time);
-	printf("... start_timer process: %s; sleep at %d then wakeup:%d...\n", PCB_Transfer_Ready_To_Timer->process_name, Time,PCB_Transfer_Ready_To_Timer->wakeup_time);
+	//printf("... start_timer current time:%d...\n",Time);
+	//printf("... start_timer process: %s; sleep at %d then wakeup:%d...\n", PCB_Transfer_Ready_To_Timer->process_name, Time,PCB_Transfer_Ready_To_Timer->wakeup_time);
 
 	CALL(AddToTimerQueue(&TimerQueueHead, PCB_Transfer_Ready_To_Timer) );					// then Add to Timer queue
 
 	if (Timer_Status == DEVICE_FREE) {                                      // nothing set the timer
 		MEM_WRITE( Z502TimerStart, sleepTime );								// go ahead and set timer
-		printf("...start_timer set timer hardware %d....\n", *sleepTime);
+		//printf("...start_timer set timer hardware %d....\n", *sleepTime);
 	}
 	else if  (Timer_Status == DEVICE_IN_USE) {								// a process in front of set Timer before
 		if (prev_Head->wakeup_time > PCB_Transfer_Ready_To_Timer->wakeup_time) {           // comopare time. Another way is compare pointer address
-			//MEM_WRITE( Z502TimerStart, sleepTime );
 
 			new_update_time = (INT32*) malloc(sizeof(INT32));
 			MEM_READ (Z502ClockStatus, &Time);
 			*new_update_time = PCB_Transfer_Ready_To_Timer->wakeup_time - Time;				
 			MEM_WRITE(Z502TimerStart, new_update_time);						// set timer based on new timer queue head
-			printf("...start_timer set timer hardware %d....\n", *new_update_time);
+			//printf("...start_timer set timer hardware %d....\n", *new_update_time);
 			free(new_update_time);
 		}
 		else {}																// do not hav eto change anything
 	}
 	
 
-	printf(" .... End start_timer TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... End start_timer Timer Queue! ...\n"); CALL(PrintQueue(TimerQueueHead) );
-	printf(" .... End start_timer ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... End start_timer Ready Queue! ...\n"); CALL( PrintQueue(ReadyQueueHead) );	
+	//printf(" .... End start_timer TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... End start_timer Timer Queue! ...\n"); CALL(PrintQueue(TimerQueueHead) );
+	//printf(" .... End start_timer ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... End start_timer Ready Queue! ...\n"); CALL( PrintQueue(ReadyQueueHead) );	
+	process_printer("E_Sleep",-1,-1,1,1,-1,-1,-1,-1);
 	//Z502Idle();															// run good from tes0- test1b
 	dispatcher(&flag_switch_and_destroy);
 	// transfer to dispatcher from test1c
@@ -525,7 +545,6 @@ void start_timer(long *sleepTime)
 
 void make_ready_to_run(ProcessControlBlock **head_of_ready, ProcessControlBlock *pcb) 
 {
-	pcb->state = PROCESS_STATE_READY;
 	AddToReadyQueue(&ReadyQueueHead,pcb);
 }
 
@@ -572,10 +591,11 @@ void dispatcher(INT32 *destroy_context) {
 	// not dequeue. Just take head then run
 	// becasue when sleep, we take off from Ready --> Timer
 
-	printf(" .... Start dispatcher TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... Start dispatcher Timer Queue! ..."); CALL( PrintQueue(TimerQueueHead) );
-	printf(" .... Start dispatcher ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Start dispatcher Ready Queue! ...\n"); CALL( PrintQueue(ReadyQueueHead) );	
+	//printf(" .... Start dispatcher TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... Start dispatcher Timer Queue! ..."); CALL( PrintQueue(TimerQueueHead) );
+	//printf(" .... Start dispatcher ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... Start dispatcher Ready Queue! ...\n"); CALL( PrintQueue(ReadyQueueHead) );	
 
-	
+	process_printer("S_Dispth",-1,-1,1,1,-1,-1,-1,-1);
+
 	if (!IsQueueEmpty(ReadyQueueHead)) {
 		if (PCB_Current_Running_Process != NULL) {									 // remove the previous data first 
 			FreePCB(PCB_Current_Running_Process);									 // remember whenever FreePCB
@@ -588,6 +608,9 @@ void dispatcher(INT32 *destroy_context) {
 													&ReadyQueueHead->process_id ) ;		
 						
 			if (*destroy_context == FALSE) {
+				//if (PCB_Current_Running_Process != NULL) {													// at least one process created
+				//	process_printer("Dispatch",PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->process_id,1,1,-1,-1,-1,-1);
+				//}
 				Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &PCB_Current_Running_Process->context );		//switch context always by Current_Running_Process
 			}
 			else if (*destroy_context == TRUE)  {
@@ -602,6 +625,70 @@ void dispatcher(INT32 *destroy_context) {
 		}
 	//}
 
-	printf(" .... End dispatcher TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... End dispatcher Timer Queue! ...\n"); CALL( PrintQueue(TimerQueueHead) );
-	printf(" .... End dispatcher ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... End dispatcher Ready Queue! ...\n"); CALL( PrintQueue(ReadyQueueHead) );	
+	//printf(" .... End dispatcher TimerQueue Size: %d ... ",SizeQueue(TimerQueueHead)); printf(" .... End dispatcher Timer Queue! ...\n"); CALL( PrintQueue(TimerQueueHead) );
+	//printf(" .... End dispatcher ReadyQueue Size: %d ... ",SizeQueue(ReadyQueueHead)); printf(" .... End dispatcher Ready Queue! ...\n"); CALL( PrintQueue(ReadyQueueHead) );	
+
+	process_printer("E_Dispth",-1,-1,1,1,-1,-1,-1,-1);
+}
+
+void	process_printer(char* action, INT32 target_process_id, INT32 running_process_id, // process_id or target = -1
+						INT32 waiting_mode,INT32 ready_mode, INT32 suspended_mode, INT32 swapped_mode,// means does not print out in state printer
+						INT32 terminated_process_id, INT32 new_process_id) 
+{
+	INT32					Time;
+	ProcessControlBlock		*readyQueue = ReadyQueueHead;			// for ready mode
+	ProcessControlBlock		*timerQueue = TimerQueueHead;			// for waiting mode
+
+	MEM_READ(Z502ClockStatus, &Time);									
+	CALL(SP_setup( SP_TIME_MODE, Time) );
+
+	CALL(SP_setup_action(SP_ACTION_MODE, action) );					//CREATE RUN READY WAITING
+	
+	// ---------------
+	// Print one value
+	// ---------------
+	if (target_process_id != -1)
+		CALL(SP_setup( SP_TARGET_MODE, target_process_id) );
+
+	if (running_process_id != -1)
+		CALL(SP_setup( SP_RUNNING_MODE, running_process_id) );
+
+	if (terminated_process_id != -1)
+		CALL(SP_setup( SP_TERMINATED_MODE, terminated_process_id) );
+
+	if (new_process_id != -1)
+		CALL(SP_setup( SP_NEW_MODE, new_process_id) );
+
+	// ------------------
+	// Print queue, table
+	// ------------------
+	
+	if (waiting_mode != -1) {
+		if (!IsQueueEmpty(TimerQueueHead)) {							// print only queue is not blank
+			while (timerQueue != NULL) {
+				CALL( SP_setup( SP_WAITING_MODE,timerQueue->process_id) );
+				timerQueue = timerQueue->nextPCB;
+			}
+		}
+	}
+	
+	if ( ready_mode != -1) {
+		if (!IsQueueEmpty(ReadyQueueHead)) {							// print only queue is not blank
+			while (readyQueue != NULL) {
+				CALL ( SP_setup( SP_READY_MODE,readyQueue->process_id) );
+				readyQueue = readyQueue->nextPCB;
+			}
+		}
+	}
+
+	if (swapped_mode != -1) {}
+	
+	if (suspended_mode != -1) {}
+
+	printf("\n-------------------------scheduler_printer Output------------------------\n");
+    CALL( SP_print_header() );
+    CALL( SP_print_line() );
+    printf("-------------------------------------------------------------------------\n\n");
+
+
 }
