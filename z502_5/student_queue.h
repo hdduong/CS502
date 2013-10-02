@@ -36,4 +36,4 @@ BOOL					IsExistsProcessIDArray(ProcessControlBlock *head[], INT32 process_id,IN
 void					RemoveFromArray(ProcessControlBlock *head[], INT32 process_id, INT32 number_of_processes);
 void					RemoveLinkedList(ProcessControlBlock *head);
 INT32					GetProcessID(ProcessControlBlock *Head[], char* process_name, INT32 num_processes);
-INT32					GetActiveProcesses(ProcessControlBlock *head[], INT32 num_processes);
+INT32					CountActiveProcesses(ProcessControlBlock *head[], INT32 num_processes);

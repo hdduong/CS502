@@ -85,6 +85,7 @@ void AddToTimerQueue(ProcessControlBlock **head, ProcessControlBlock *pcb)
 
 }
 
+// Oct 2: Add with priority
 
 void AddToReadyQueue(ProcessControlBlock **head, ProcessControlBlock *pcb)
 {
@@ -98,8 +99,15 @@ void AddToReadyQueue(ProcessControlBlock **head, ProcessControlBlock *pcb)
 		return;
 	}		
 
+	if ( pcb->priority < (*head)->priority  )	{		// infront of queue
+		pcb->nextPCB = *head;
+		*head = pcb;
+		return;
+	}
+
+
 	tmp = *head;
-	while (tmp != NULL) {
+	while ( (tmp != NULL) && (tmp->priority <= pcb->priority) ) {
 		prev = tmp;
 		tmp = tmp->nextPCB;
 	}
@@ -256,6 +264,21 @@ ProcessControlBlock		*InsertLinkedListPID(ProcessControlBlock *head, ProcessCont
 	return head;
 }
 
+void	RemoveLinkedList(ProcessControlBlock *head) 
+{
+	ProcessControlBlock *tmp = head;
+	while(head!=NULL) {
+		head = head->nextPCB;
+		FreePCB(tmp);
+	}
+
+	return;
+}
+
+//------------------------------------------------------------------//
+//			       Array PCB Table									//
+//------------------------------------------------------------------//
+
 BOOL	IsExistsProcessNameArray(ProcessControlBlock *head[], char* process_name, INT32 number_of_processes)
 {
 	INT32	count = 0;
@@ -326,16 +349,7 @@ void RemoveFromArray(ProcessControlBlock *head[], INT32 process_id, INT32 num_pr
 }
 
 
-void	RemoveLinkedList(ProcessControlBlock *head) 
-{
-	ProcessControlBlock *tmp = head;
-	while(head!=NULL) {
-		head = head->nextPCB;
-		FreePCB(tmp);
-	}
 
-	return;
-}
 
 
 INT32 GetProcessID(ProcessControlBlock *head[], char* process_name, INT32 num_processes) {
@@ -362,7 +376,7 @@ INT32 GetProcessID(ProcessControlBlock *head[], char* process_name, INT32 num_pr
 }
 
 
-INT32 GetActiveProcesses(ProcessControlBlock *head[], INT32 num_processes) {
+INT32 CountActiveProcesses(ProcessControlBlock *head[], INT32 num_processes) {
 	INT32	count = 0;
 	INT32	index = 0;
 

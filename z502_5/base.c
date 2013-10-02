@@ -56,6 +56,7 @@ INT32						generate_interrupt_immediately  = 1 ;									// use for generate int
 
 BOOL						wait_interrupt_finish;
 INT32						interrupt_level = 0;
+INT32						last_terminate_process_id;
 
 ProcessControlBlock			*TimerQueueHead;														// TimerQueue 
 ProcessControlBlock			*ReadyQueueHead;														// ReadyQueue
@@ -114,6 +115,8 @@ void    interrupt_handler( void ) {
     CALL( MEM_READ(Z502InterruptStatus, &status ) );
 
 	if ( device_id == TIMER_INTERRUPT && status == ERR_SUCCESS ) {
+		
+
 		MEM_READ(Z502ClockStatus, &Time);													// read current time and compare to front of Timer queue
 
 		tmp = TimerQueueHead;
@@ -136,7 +139,7 @@ void    interrupt_handler( void ) {
 			tmp = TimerQueueHead;															// transfer until front Timer Queue > current time
 
 		}
-
+		
 		//--------------------------------------------------------//
 		//		  update start timer based on new head			  //	
 		//--------------------------------------------------------//
@@ -325,7 +328,7 @@ void    osInit( int argc, char *argv[]  ) {
     INT32               i;
 	INT32				created_process_error;
 	INT32				created_process_id;
-	INT32				test_case_prioirty = 1;
+	INT32				test_case_prioirty = 10;
 	
 
     /* Demonstrates how calling arguments are passed thru to here       */
@@ -389,7 +392,9 @@ void    osInit( int argc, char *argv[]  ) {
 	//Z502MakeContext( &next_context, (void*) test1b, USER_MODE );	
 	//Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
 	
-	CALL ( os_create_process("test1c",(void*) test1c,test_case_prioirty, &created_process_id, &created_process_error) );
+	//CALL ( os_create_process("test1c",(void*) test1c,test_case_prioirty, &created_process_id, &created_process_error) );
+
+	CALL ( os_create_process("test1d",(void*) test1d,test_case_prioirty, &created_process_id, &created_process_error) );
 	
 }                                               // End of osInit
 
@@ -492,9 +497,7 @@ void start_timer(long *sleepTime)
 	CALL( UnLockPrinter(&printer_lock_result) );
 	
 	CALL( UnLockTimer(&lock_switch_thread_result) );
-	
 
-	
 	if (prev_Head == NULL) {                                            // no process in timerQueue
 			
 		// debug
@@ -528,8 +531,12 @@ void make_ready_to_run(ProcessControlBlock **head_of_ready, ProcessControlBlock 
 {
 	CALL( AddToReadyQueue(&ReadyQueueHead,pcb) );
 
-	if ( strcmp(pcb->process_name, "test1c") == 0 )
+	if ( strcmp(pcb->process_name, "test1c") == 0 ) {
 		CALL( dispatcher() );
+	}
+	else if ( strcmp(pcb->process_name, "test1d") == 0 ) {
+		CALL( dispatcher() );
+	}
 
 }
 
@@ -574,6 +581,7 @@ void terminate_proccess_id(INT32 process_id, INT32* error_return)
 		CALL( LockTimer(&lock_switch_thread_result) );										// remove from PCB table
 		CALL( RemoveFromArray(PCB_Table,process_id,number_of_processes_created) );
 		PCB_Current_Running_Process = ReadyQueueHead;
+		last_terminate_process_id = process_id;
 		CALL( UnLockTimer(&lock_switch_thread_result) );
 		*error_return = ERR_SUCCESS;														//success
 
@@ -585,8 +593,46 @@ void terminate_proccess_id(INT32 process_id, INT32* error_return)
 
 void dispatcher() {
 	
+	INT32              status;
+	INT32			   Time;
+	INT32			   *new_update_time;										// for Relative time from new head after put into Ready queue
+	ProcessControlBlock	*tmp = NULL;											
+
+
 	while (IsQueueEmpty(ReadyQueueHead)) {
+
+		
+		CALL( LockTimer(&lock_switch_thread_result) );	
+		new_update_time = (INT32*) malloc(sizeof(INT32));
+		MEM_READ(Z502ClockStatus, &Time);			
+		
+		tmp = TimerQueueHead;												// not in ReadyQueue so shold be in TimerQueue
+		if ( (tmp == NULL) && (PCB_Current_Running_Process != NULL) ) {
+			 if ( (CountActiveProcesses(PCB_Table,number_of_processes_created) == 1)  &&
+				 (last_terminate_process_id != PCB_Current_Running_Process->process_id) )
+			{	//only one process left. Terminate all other thread in test1c, 1d
+				CALL( UnLockTimer(&lock_switch_thread_result) );
+				Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &PCB_Current_Running_Process->context );		//switch context always by Current_Running_Process
+			}
+			CALL( UnLockTimer(&lock_switch_thread_result) );
+			return;
+		}
+		
+		*new_update_time = tmp->wakeup_time - Time;							// there: tmp== NULL or tmp->wakeup_time > Time
+			
+		if (*new_update_time > 0) {										// if time is not pass
+			MEM_WRITE(Z502TimerStart, new_update_time);						// set timer based on new timer queue head
+			//debug
+			//printf("... Dispatcher... new_update_time: %d, wakeup time %d \n",*new_update_time, tmp->wakeup_time);
+			//debug
+		}
+		else {															// time already pass
+			MEM_WRITE(Z502TimerStart, &generate_interrupt_immediately);
+		}
+
 		CALL(Z502Idle());
+		CALL( UnLockTimer(&lock_switch_thread_result) );
+
 	}
 
 	CALL( LockTimer(&lock_switch_thread_result) );
