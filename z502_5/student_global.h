@@ -37,6 +37,7 @@
 #define			PROCESS_PCB_TABLE_LOCK					3L
 #define			PRINTER_LOCK							4L
 #define			SUSPEND_LOCK							5L
+#define			PRIORITY_LOCK							6L
 
 
 #define			PROCESS_SUSPEND_INVALID_PROCESS_ID		1L
@@ -61,6 +62,14 @@
 #define			RESUME_AFTER							21L
 #define			DISPATCH_BEFORE							22L
 #define			DISPATCH_AFTER							23L
+#define			PRIORITY_BEFORE							24L
+#define			PRIORITY_AFTER							25L
 
+
+#define			MAX_PRIORITY_ALLOWED					500L
+
+#define			PRIORITY_LEGAL							0L
+#define			PRIORITY_ILLEGAL_PROCESS_ID				1L
+#define			PRIORITY_ILLEGAL_PRIORITY				2L
 
 #endif

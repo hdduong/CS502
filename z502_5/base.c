@@ -19,7 +19,7 @@
         3.0 August   2004: Modified to support memory mapped IO
         3.1 August   2004: hardware interrupt runs on separate thread
         3.11 August  2004: Support for OS level locking
-	4.0  July    2013: Major portions rewritten to support multiple threads
+		4.0  July    2013: Major portions rewritten to support multiple threads
 ************************************************************************/
 
 #include             "global.h"
@@ -53,7 +53,7 @@ INT32						ready_queue_result;														// lock for ready queue
 INT32						timer_queue_result;														// lock for timer queue
 INT32						suspend_list_result;													// lock for suspend list
 INT32						printer_lock_result;													// used for locking printing code
-
+INT32						priority_lock_result;													// used for locking priority changed code
 
 INT32						generate_interrupt_immediately  = 1 ;									// use for generate interrupt when Timer passed the wake-up time
 
@@ -69,6 +69,7 @@ ProcessControlBlock			*PCB_Transfer_Ready_To_Timer;											// used to transfe
 ProcessControlBlock			*PCB_Transfer_Ready_To_Suspend;											// used to transfer PCB to suspend
 ProcessControlBlock			*PCB_Transfer_Timer_To_Suspend;											// used to transfer PCB to suspend
 ProcessControlBlock			*PCB_Transfer_Suspend_To_Ready;											// used to transfer PCB in resume
+ProcessControlBlock			*PCB_Change_Priority;													// used for change priority in ReadyQueue
 
 ProcessControlBlock			*PCB_Current_Running_Process;											// keep point to currrent running process, set when SwitchContext, Dispatcher
 																									// used as ProcessControlBlock			*PCB_Transfer_Ready_To_Timer;											// used to transfer PCB in start_timer
@@ -82,7 +83,8 @@ INT32	check_legal_process(char* process_name, INT32 initial_priority);							// 
 INT32	check_legal_process_suspend(INT32 process_id);												// check legal process from ReadyQueue before suspend
 void	start_timer(long * sleepTime);
 void	terminate_proccess_id(INT32 process_id, INT32 *process_error_return);						// terminate specified a process with process_id
-void	suspend_process_id(INT32  process_id, INT32 *process_error_return);							// suspend specified a process with process_id
+void	suspend_process_id(INT32  process_id, INT32 *process_error_return);							// suspend specified a process with process_id. Allow suspend self
+void	change_process_priority(INT32 process_id, INT32 new_priority, INT32 *process_error_return);	// change priority of a process with process_id. Allow change self
 void	resume_process_id(INT32  process_id, INT32 *process_error_return);							// resume specified a process with process_id
 void	make_ready_to_run(ProcessControlBlock **ReadyQueueHead, ProcessControlBlock *pcb);			// Insert into readque
 void	dispatcher();
@@ -98,6 +100,8 @@ void LockPrinter (INT32 *printer_lock_result);
 void UnLockPrinter(INT32 *printer_lock_result);
 void LockSuspend (INT32 *suspend_list_result);
 void UnLockSuspend (INT32 *suspend_list_result);
+void LockPriority (INT32 *priority_lock_result);
+void UnLockPriority (INT32 *priority_lock_result);
 
 
 /**************************************************************** hdduong> **********************************************************************************/
@@ -171,7 +175,6 @@ void    interrupt_handler( void ) {
 				//printf("... Ready... Time Pass... IMMEDIATELY GEN: \n");
 				//debug
 			}
-	
 			free(new_update_time);
 		}
 
@@ -231,6 +234,8 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 	void				*starting_address;			 // starting address of rountine in CREATE_PROCESS
 	INT32				suspend_arg;				 // suspend argument process_id of SUSPEND_PROCESS
 	INT32				resume_arg;					 // resume argument process_id of RESUME_PROCESS
+	INT32				priority_process_id_arg;	 //	change priority of a process_id in CHANGE_PRIORITY
+	INT32				priority_new_arg;			 //	new priority in CHANGE_PRIORITY
 
     call_type = (short)SystemCallData->SystemCallNumber;
     if ( do_print > 0 ) {
@@ -334,8 +339,8 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 				suspend_process_id(suspend_arg,&process_error_arg);
 				*(INT32 *)SystemCallData->Argument[1] = process_error_arg;
 			}
-			//if (process_error_arg == PROCESS_SUSPEND_LEGAL)
-			//	CALL(dispatcher() );
+			//if (process_error_arg == PROCESS_SUSPEND_LEGAL)												// only allows another process to run when suspend self
+			//	CALL(dispatcher() );																		// which done in suspend_process_id
 			
 			break;
 		
@@ -345,6 +350,15 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 			
 			resume_process_id(resume_arg, &process_error_arg);
 		    *(INT32 *)SystemCallData->Argument[1] = process_error_arg;                                      // resume with process_id provided
+
+			break;
+		// change priority
+		case SYSNUM_CHANGE_PRIORITY:																		//The result of a change priority takes effect immediately
+			priority_process_id_arg = (INT32) SystemCallData->Argument[0];
+			priority_new_arg = (INT32) SystemCallData->Argument[1];
+
+			change_process_priority(priority_process_id_arg,priority_new_arg, &process_error_arg);
+			 *(INT32 *)SystemCallData->Argument[2] = process_error_arg;
 
 			break;
 
@@ -424,7 +438,9 @@ void    osInit( int argc, char *argv[]  ) {
 	else if (( argc > 1 ) && ( strcmp( argv[1], "test1f" ) == 0 ) ) {
 		CALL( os_create_process("test1f",(void*) test1f,test_case_prioirty, &created_process_id, &created_process_error) );
 	}
-
+	else if (( argc > 1 ) && ( strcmp( argv[1], "test1g" ) == 0 ) ) {
+		CALL( os_create_process("test1g",(void*) test1f,test_case_prioirty, &created_process_id, &created_process_error) );
+	}
 	//----------------------------------------------------------//
 	//				Run test manuallly			    			//
 	//----------------------------------------------------------//
@@ -446,8 +462,9 @@ void    osInit( int argc, char *argv[]  ) {
 
 	//CALL ( os_create_process("test1e",(void*) test1e,test_case_prioirty, &created_process_id, &created_process_error) );
 
-	CALL ( os_create_process("test1f",(void*) test1f,test_case_prioirty, &created_process_id, &created_process_error) );
+	//CALL ( os_create_process("test1f",(void*) test1f,test_case_prioirty, &created_process_id, &created_process_error) );
 	
+	CALL ( os_create_process("test1g",(void*) test1g,test_case_prioirty, &created_process_id, &created_process_error) );
 }                                               // End of osInit
 
 
@@ -595,6 +612,10 @@ void make_ready_to_run(ProcessControlBlock **head_of_ready, ProcessControlBlock 
 			CALL( dispatcher() );
 		}
 		else if ( strcmp(pcb->process_name, "test1f") == 0 ) {
+			use_priority_queue = TRUE;
+			CALL( dispatcher() );
+		}
+		else if ( strcmp(pcb->process_name, "test1g") == 0 ) {
 			use_priority_queue = TRUE;
 			CALL( dispatcher() );
 		}
@@ -815,7 +836,16 @@ void	process_printer(char* action, INT32 target_process_id,				// -1 means does 
 	case SUSPEND_AFTER:
 		CALL( printf("\n--------------------------After Suspend-----------------------------------\n") );
 		break;
-		
+
+	case PRIORITY_BEFORE:
+		CALL( printf("\n--------------------------Before Change Priority--------------------------\n") );
+		break;
+
+	case PRIORITY_AFTER:
+		CALL( printf("\n--------------------------After Change Priority---------------------------\n") );
+		break;
+
+
 	default:
 		break;
 	}
@@ -858,6 +888,15 @@ void LockPrinter (INT32 *printer_lock_result) {
 void UnLockPrinter(INT32 *printer_lock_result) {
 	READ_MODIFY( MEMORY_INTERLOCK_BASE + PRINTER_LOCK, DO_UNLOCK, SUSPEND_UNTIL_LOCKED, printer_lock_result );
 }
+
+void LockPriority (INT32 *priority_lock_result) {
+	READ_MODIFY( MEMORY_INTERLOCK_BASE + PRIORITY_LOCK, DO_LOCK, SUSPEND_UNTIL_LOCKED, priority_lock_result );
+}
+
+void UnLockPriority(INT32 *priority_lock_result) {
+	READ_MODIFY( MEMORY_INTERLOCK_BASE + PRIORITY_LOCK, DO_UNLOCK, SUSPEND_UNTIL_LOCKED, priority_lock_result );
+}
+
 
 INT32	check_legal_process_suspend(INT32 process_id) 
 {
@@ -934,7 +973,7 @@ void suspend_process_id(INT32  process_id, INT32 *process_error_return)
 					else {																			// time already pass
 						MEM_WRITE(Z502TimerStart, &generate_interrupt_immediately);
 						//debug
-						printf("... Suspend... Time Pass... IMMEDIATELY GEN: \n");
+						//printf("... Suspend... Time Pass... IMMEDIATELY GEN: \n");
 						//debug
 					}
 	
@@ -1013,4 +1052,63 @@ void resume_process_id(INT32  process_id, INT32 *process_error_return)
 	CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_Suspend_To_Ready) );
 	
 	*process_error_return =  PROCESS_RESUME_LEGAL;
+}
+
+INT32	check_legal_change_process_priority(INT32 process_id, INT32 new_priority)  {
+	
+	if (!IsExistsProcessIDArray(PCB_Table, process_id, number_of_processes_created) )					// if this priority process_id is not even in table
+		return PRIORITY_ILLEGAL_PROCESS_ID;
+
+	if (new_priority > MAX_PRIORITY_ALLOWED) {														    // if this process exists but priority is illegal				
+		return PRIORITY_ILLEGAL_PRIORITY;
+	}
+
+	return PRIORITY_LEGAL;
+}
+
+void	change_process_priority(INT32 process_id, INT32 new_priority, INT32 *process_error_return) {
+	
+	INT32					legal_priority_process; 
+	ProcessControlBlock		*tmp;	 
+	BOOL					in_timer_queue;
+	BOOL					in_ready_queue;
+
+	if ( (legal_priority_process = check_legal_change_process_priority(process_id, new_priority) ) != PRIORITY_LEGAL)  {		// not a legal process  
+		*process_error_return  =  legal_priority_process;
+		return;
+	}
+
+	CALL(process_printer("Priority", process_id,-1,-1,PRIORITY_BEFORE) );
+
+	if (PCB_Current_Running_Process->process_id == process_id) {
+		CALL( LockPriority(&priority_lock_result) );
+		PCB_Current_Running_Process->priority = new_priority;
+		CALL( UnLockPriority(&priority_lock_result) );
+		return;
+	}
+	else {																							// change priority of process in ReadyQueue, TimerQueue or maybe SuspendList
+		CALL( LockTimer(&timer_queue_result) );
+		
+		in_timer_queue = IsExistsProcessIDQueue(TimerQueueHead,process_id);
+		
+		if (in_timer_queue) {
+			CALL( UpdateProcessPriorityQueue(&TimerQueueHead,process_id,new_priority) );
+		}
+		
+		CALL( UnLockTimer(&timer_queue_result) );
+
+		CALL( LockReady(&ready_queue_result) );
+		
+		in_ready_queue = IsExistsProcessIDQueue(ReadyQueueHead,process_id);
+		
+		if (in_ready_queue) {
+			PCB_Change_Priority = PullProcessFromQueue(&ReadyQueueHead, process_id);
+			PCB_Change_Priority->priority = new_priority;
+			CALL( make_ready_to_run(&ReadyQueueHead,PCB_Change_Priority) );
+		}
+		
+		CALL( UnLockReady(&ready_queue_result) );
+		*process_error_return = PRIORITY_LEGAL;
+	}
+
 }

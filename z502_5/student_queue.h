@@ -30,6 +30,7 @@ void					DeleteQueue(ProcessControlBlock *head);
 BOOL					IsExistsProcessIDQueue(ProcessControlBlock *head, INT32 process_id);
 void					RemoveProcessFromQueue(ProcessControlBlock **head, INT32 process_id); 
 ProcessControlBlock		*PullProcessFromQueue(ProcessControlBlock **head, INT32 process_id); 
+void					UpdateProcessPriorityQueue(ProcessControlBlock **head, INT32 process_id,INT32 new_priority); 
 
 ProcessControlBlock		*InsertLinkedListPID(ProcessControlBlock *head, ProcessControlBlock *pcb);
 BOOL					IsExistsProcessNameArray(ProcessControlBlock *head[], char *process_name, INT32 number_of_processes);

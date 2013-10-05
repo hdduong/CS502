@@ -281,7 +281,21 @@ ProcessControlBlock	*PullProcessFromQueue(ProcessControlBlock **head, INT32 proc
 	return tmp;
 }
 
+void	UpdateProcessPriorityQueue(ProcessControlBlock **head, INT32 process_id,INT32 new_priority) 
+{
+	// assume that process_id already exists
 
+	ProcessControlBlock *tmp = *head;
+
+	while ( (tmp != NULL) && (tmp->process_id != process_id) ) {
+		tmp = tmp->nextPCB;
+	}
+
+	if (tmp !=NULL) {												// make sure exists
+		tmp->priority = new_priority;
+		return;
+	}
+}
 
 
 //------------------------------------------------------------------//
