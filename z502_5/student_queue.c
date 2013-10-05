@@ -117,6 +117,30 @@ void AddToReadyQueue(ProcessControlBlock **head, ProcessControlBlock *pcb)
 }
 
 
+
+void AddToReadyQueueNotPriority(ProcessControlBlock **head, ProcessControlBlock *pcb)
+{
+	ProcessControlBlock *tmp;
+	ProcessControlBlock *prev;
+	
+	if (IsQueueEmpty(*head)) 
+	{
+		*head = pcb;
+		(*head)->nextPCB = NULL;
+		return;
+	}		
+
+	tmp = *head;
+	while (tmp != NULL) {
+		prev = tmp;
+		tmp = tmp->nextPCB;
+	}
+	prev->nextPCB = pcb;								// insert in the Middle & End	
+	pcb->nextPCB = tmp;
+
+}
+
+
 ProcessControlBlock *DeQueue(ProcessControlBlock **head)
 {
 	ProcessControlBlock *tmp;
@@ -234,8 +258,108 @@ void	RemoveProcessFromQueue(ProcessControlBlock **head, INT32 process_id)
 	//FreePCB(tmp);
 }
 
+
+ProcessControlBlock	*PullProcessFromQueue(ProcessControlBlock **head, INT32 process_id) 
+{
+	// assume that process_id already exists
+
+	ProcessControlBlock *prev = NULL;
+	ProcessControlBlock *tmp = *head;
+
+	if (tmp->process_id == process_id) {											// remove the head
+		*head = (*head)->nextPCB;
+		//FreePCB(tmp);
+		return tmp;
+	}
+
+	while ( (tmp != NULL) && (tmp->process_id != process_id) ) {
+		prev = tmp;
+		tmp = tmp->nextPCB;
+	}
+
+	prev->nextPCB = tmp->nextPCB;
+	return tmp;
+}
+
+
+
+
 //------------------------------------------------------------------//
-//			       LINKED LIST PCB Table							//
+//			       LINKED LIST Suspend								//
+//------------------------------------------------------------------//
+BOOL	IsExistsProcessIDList(ProcessControlBlock *head, INT32 process_id)
+{
+	ProcessControlBlock *tmp = head;
+	if (head == NULL)
+		return FALSE;
+
+	while (tmp!= NULL) {
+		if (tmp->process_id == process_id)
+			return TRUE;
+
+		tmp = tmp->nextPCB;
+	}
+
+	return FALSE;
+}
+
+
+BOOL IsListEmpty(ProcessControlBlock *head)
+{
+	if (head == NULL)  
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+
+
+void AddToSuspendList(ProcessControlBlock **head, ProcessControlBlock *pcb)
+{
+
+	if (IsListEmpty(*head)) 
+	{
+		*head = pcb;
+		(*head)->nextPCB = NULL;
+		return;
+	}		
+
+	pcb->nextPCB = *head;
+	*head = pcb;
+
+}
+
+ProcessControlBlock *PullFromSuspendList(ProcessControlBlock **head, INT32 process_id)
+{
+	ProcessControlBlock *tmp = NULL;
+	ProcessControlBlock *prev = NULL;
+
+	if (IsListEmpty(*head)) 
+	{
+		return NULL;
+	}		
+
+	tmp = *head;
+	while (tmp != NULL) {
+		if (tmp->process_id == process_id) {
+			if (prev == NULL) {											// remove head
+				(*head) = (*head)->nextPCB;
+				return tmp;
+			}
+			prev->nextPCB = tmp->nextPCB;
+			return tmp;
+		}
+		prev = tmp;
+		tmp = tmp->nextPCB;
+	}
+
+	return NULL;
+}
+
+
+//------------------------------------------------------------------//
+//			       LINKED LIST PCB Table: Obsolete					//
 //------------------------------------------------------------------//
 
 
@@ -389,3 +513,19 @@ INT32 CountActiveProcesses(ProcessControlBlock *head[], INT32 num_processes) {
 
 	return count;
 }
+
+/* check to better printout */
+
+BOOL IsKilledProcess(ProcessControlBlock *head[], INT32 process_id, INT32 num_processes) {
+	INT32	index = 0;
+
+	while (index < num_processes) {
+		if ( (head[index] != NULL)  && (head[index]->process_id == process_id)
+			&& (head[index]->state == PROCESS_STATE_TERMINATE) ) 
+			return TRUE;
+		index++;
+	}  
+
+	return FALSE;
+}
+

@@ -49,20 +49,27 @@ char                 *call_names[] = { "mem_read ", "mem_write",
 INT32						global_process_id = 0;													// keep track of process_id  
 INT32						number_of_processes_created = 0;										// keep track of number processes created. It might need lock
 																									// = global_process_id but easier to read	
-INT32						lock_switch_thread_result;												// lock for ready queue
+INT32						ready_queue_result;														// lock for ready queue
+INT32						timer_queue_result;														// lock for timer queue
+INT32						suspend_list_result;													// lock for suspend list
 INT32						printer_lock_result;													// used for locking printing code
+
 
 INT32						generate_interrupt_immediately  = 1 ;									// use for generate interrupt when Timer passed the wake-up time
 
-BOOL						wait_interrupt_finish;
-INT32						interrupt_level = 0;
-INT32						last_terminate_process_id;
+BOOL						already_run_main_test = FALSE;
+BOOL						use_priority_queue = FALSE;												//use priority queue or not
 
 ProcessControlBlock			*TimerQueueHead;														// TimerQueue 
 ProcessControlBlock			*ReadyQueueHead;														// ReadyQueue
+ProcessControlBlock			*SuspendListHead;														// SuspendList
 
 ProcessControlBlock			*PCB_Transfer_Timer_To_Ready;											// used to transfer PCB in interrupt
 ProcessControlBlock			*PCB_Transfer_Ready_To_Timer;											// used to transfer PCB in start_timer
+ProcessControlBlock			*PCB_Transfer_Ready_To_Suspend;											// used to transfer PCB to suspend
+ProcessControlBlock			*PCB_Transfer_Timer_To_Suspend;											// used to transfer PCB to suspend
+ProcessControlBlock			*PCB_Transfer_Suspend_To_Ready;											// used to transfer PCB in resume
+
 ProcessControlBlock			*PCB_Current_Running_Process;											// keep point to currrent running process, set when SwitchContext, Dispatcher
 																									// used as ProcessControlBlock			*PCB_Transfer_Ready_To_Timer;											// used to transfer PCB in start_timer
 ProcessControlBlock			*PCB_Terminating_Processs;												// keep current context then destroy in next context
@@ -72,19 +79,26 @@ ProcessControlBlock			*PCB_Table[MAX_PROCESSES];												// Move PCB Table to
 
 void	os_create_process(char* process_name, void	*starting_address, INT32 priority, INT32 process_id, INT32 *error);
 INT32	check_legal_process(char* process_name, INT32 initial_priority);							// check Legal process before create process
+INT32	check_legal_process_suspend(INT32 process_id);												// check legal process from ReadyQueue before suspend
 void	start_timer(long * sleepTime);
 void	terminate_proccess_id(INT32 process_id, INT32 *process_error_return);						// terminate specified a process with process_id
+void	suspend_process_id(INT32  process_id, INT32 *process_error_return);							// suspend specified a process with process_id
+void	resume_process_id(INT32  process_id, INT32 *process_error_return);							// resume specified a process with process_id
 void	make_ready_to_run(ProcessControlBlock **ReadyQueueHead, ProcessControlBlock *pcb);			// Insert into readque
 void	dispatcher();
 void	please_charge_hardware_time() {};															// increase time function, used in infinite loop
-void	process_printer(char* action, INT32 target_process_id, INT32 running_process_id, // process_id or target = -1
-						INT32 waiting_mode,INT32 ready_mode, INT32 suspended_mode, INT32 swapped_mode,// means does not print out in state printer
-						INT32 terminated_process_id, INT32 new_process_id);
+void	process_printer(char* action, INT32 target_process_id,										// -1 means does not print out in state printer
+						INT32 terminated_process_id, INT32 new_process_id, INT32 where_to_print);
 
 void LockTimer (INT32 *timer_lock_result);
 void UnLockTimer (INT32 *timer_lock_result);
+void LockReady (INT32 *ready_lock_result);
+void UnLockReady (INT32 *ready_lock_result);
 void LockPrinter (INT32 *printer_lock_result);
 void UnLockPrinter(INT32 *printer_lock_result);
+void LockSuspend (INT32 *suspend_list_result);
+void UnLockSuspend (INT32 *suspend_list_result);
+
 
 /**************************************************************** hdduong> **********************************************************************************/
 
@@ -103,9 +117,8 @@ void    interrupt_handler( void ) {
 	INT32			   *new_update_time;										// for Relative time from new head after put into Ready queue
 	ProcessControlBlock	*tmp = NULL;											// check front of time queue head
 
-	CALL( LockTimer(&lock_switch_thread_result) );
-	interrupt_level++;
-    // Get cause of interrupt
+	
+	// Get cause of interrupt
     CALL( MEM_READ(Z502InterruptDevice, &device_id ) );
 
     // Set this device as target of our query
@@ -118,6 +131,10 @@ void    interrupt_handler( void ) {
 		
 
 		MEM_READ(Z502ClockStatus, &Time);													// read current time and compare to front of Timer queue
+		
+		LockTimer(&timer_queue_result);
+		
+		CALL(process_printer("Ready",-1,-1,-1,INTERRUPT_BEFORE) );
 
 		tmp = TimerQueueHead;
 		while ( (tmp!= NULL) && (tmp->wakeup_time <= Time) ) {
@@ -125,21 +142,15 @@ void    interrupt_handler( void ) {
 			//printf (" ...ready ... process_id: %d, wake-up: %d, Time: %d \n", tmp->process_id, tmp->wakeup_time, Time);
 			//debug
 
-			CALL( LockTimer(&lock_switch_thread_result) );
 			PCB_Transfer_Timer_To_Ready = DeQueue(&TimerQueueHead);							// take off front Timer queue
 
 			CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_Timer_To_Ready) );		// put in the end of Ready Queue
 
-			CALL( LockPrinter(&printer_lock_result) );
-			process_printer("Ready",-1,PCB_Current_Running_Process->process_id,1,1,-1,-1,-1,-1);
-			CALL( UnLockPrinter(&printer_lock_result) );
-
-			CALL( UnLockTimer(&lock_switch_thread_result) );
-			
 			tmp = TimerQueueHead;															// transfer until front Timer Queue > current time
 
 		}
 		
+		CALL( process_printer("Ready",-1,-1,-1,INTERRUPT_AFTER) );
 		//--------------------------------------------------------//
 		//		  update start timer based on new head			  //	
 		//--------------------------------------------------------//
@@ -163,9 +174,10 @@ void    interrupt_handler( void ) {
 	
 			free(new_update_time);
 		}
+
+		UnLockTimer(&timer_queue_result);									// should have lock here otherwise something come in before update start_timer
 	}
-	interrupt_level--;
-	CALL( UnLockTimer(&lock_switch_thread_result) );
+	
 	// Clear out this device - we're done with it
     MEM_WRITE(Z502InterruptClear, &Index );
 	
@@ -205,20 +217,20 @@ void    fault_handler( void )
         with the amount of data.
 ************************************************************************/
 void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
-    short               call_type;
-    static INT16        do_print = 100;
-    INT32               Time;
-	short               i;
+    short               call_type;					 /* those babies are from Prof's code */
+    static INT16        do_print = 100;				 /*									  */
+    INT32               Time;						 /*									  */
+	short               i;							 /*			Leave as they are		  */	
+	
 	INT32				create_priority;			 // read argument 2 - prioirty of CREATE_PROCESS
 	long				SleepTime;					 // using in SYSNUM_SLEEP
-	//ProcessControlBlock *newPCB;					 // create new process
-	INT32				terminate_arg;				 // terminate argument of TERMINATE_PROCESS
+	INT32				terminate_arg;				 // terminate argument process_id of TERMINATE_PROCESS
 	char				*process_name_arg = NULL;	 // process name argument of GET_PROCESS_ID, CREATE_PROCESS
-	INT32				process_error_arg;			 // process error check for GET_PROCESS_ID, CREATE_PROCESS
+	INT32				process_error_arg;			 // process error check for GET_PROCESS_ID, CREATE_PROCESS, SUSPEND_PROCESS
 	INT32				process_id_arg;				 // process_id returns in GET_PROCESS_ID, CREATE_PROCESS
 	void				*starting_address;			 // starting address of rountine in CREATE_PROCESS
-	INT32				generate_interrupt = 1;
-	BOOL				loop_wait_fill_ReadyQueue = TRUE;
+	INT32				suspend_arg;				 // suspend argument process_id of SUSPEND_PROCESS
+	INT32				resume_arg;					 // resume argument process_id of RESUME_PROCESS
 
     call_type = (short)SystemCallData->SystemCallNumber;
     if ( do_print > 0 ) {
@@ -248,24 +260,27 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 		// terminate system call
 		case SYSNUM_TERMINATE_PROCESS:
 			
-			terminate_arg =  (INT32) SystemCallData->Argument[0];		//get process_id
+			terminate_arg =  (INT32) SystemCallData->Argument[0];												//get process_id
 
-			if (terminate_arg == -1) {									//terminate self means terminate current running process
+			if (terminate_arg == -1) {																			//terminate self means terminate current running process
 				CALL( terminate_proccess_id(PCB_Current_Running_Process->process_id,&process_error_arg) );		//this will not free PCB_Current_Running_Process. Free in the queue only
 				
 				*(INT32 *)SystemCallData->Argument[1] = process_error_arg;
 
-				CALL( dispatcher() );													//try to switch to next process after current process terminated	
+				PCB_Current_Running_Process = NULL;																//termination condition for test1e
+
+				CALL( dispatcher() );																			//try to switch to next process after current process terminated	
 				
 			}
 
-			else if (terminate_arg == -2) {								//terminate self + children
-				// global_process_id
-				CALL( DeleteQueue(TimerQueueHead) );							// release all heap memory before quit
+			else if (terminate_arg == -2) {																		//terminate self + children
+				
+				CALL( DeleteQueue(TimerQueueHead) );															// release all heap memory before quit
 				CALL( DeleteQueue(ReadyQueueHead) );
+				// ----Need to delete the array also -- //
 				CALL( Z502Halt() );
 			}
-			else  {																	// terminate a process with process_id
+			else  {																								// terminate a process with process_id
 				//SleepTime = 0;
 				CALL( terminate_proccess_id(terminate_arg, &process_error_arg) );	
 				*(INT32 *)SystemCallData->Argument[1] = process_error_arg;
@@ -307,6 +322,32 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 			}
 			break;
 		
+		// suspend process
+		case SYSNUM_SUSPEND_PROCESS:
+			suspend_arg =  (INT32) SystemCallData->Argument[0];												//get process_id	
+			
+			if (suspend_arg == -1) {																		// suspend self
+				suspend_process_id(PCB_Current_Running_Process->process_id,&process_error_arg);
+				*(INT32 *)SystemCallData->Argument[1] = process_error_arg;
+			}
+			else {                                                                                          // suspend with process_id provided
+				suspend_process_id(suspend_arg,&process_error_arg);
+				*(INT32 *)SystemCallData->Argument[1] = process_error_arg;
+			}
+			//if (process_error_arg == PROCESS_SUSPEND_LEGAL)
+			//	CALL(dispatcher() );
+			
+			break;
+		
+		// resume process
+		case SYSNUM_RESUME_PROCESS:
+			resume_arg =  (INT32) SystemCallData->Argument[0];												//get process_id	
+			
+			resume_process_id(resume_arg, &process_error_arg);
+		    *(INT32 *)SystemCallData->Argument[1] = process_error_arg;                                      // resume with process_id provided
+
+			break;
+
 		default:  
             printf( "ERROR!  call_type not recognized!\n" ); 
             printf( "Call_type is - %i\n", call_type);
@@ -374,6 +415,15 @@ void    osInit( int argc, char *argv[]  ) {
 	else if (( argc > 1 ) && ( strcmp( argv[1], "test1c" ) == 0 ) ) {
 		CALL( os_create_process("test1c",(void*) test1c,test_case_prioirty, &created_process_id, &created_process_error) );
 	}
+	else if (( argc > 1 ) && ( strcmp( argv[1], "test1d" ) == 0 ) ) {
+		CALL( os_create_process("test1d",(void*) test1d,test_case_prioirty, &created_process_id, &created_process_error) );
+	}
+	else if (( argc > 1 ) && ( strcmp( argv[1], "test1e" ) == 0 ) ) {
+		CALL( os_create_process("test1e",(void*) test1e,test_case_prioirty, &created_process_id, &created_process_error) );
+	}
+	else if (( argc > 1 ) && ( strcmp( argv[1], "test1f" ) == 0 ) ) {
+		CALL( os_create_process("test1f",(void*) test1f,test_case_prioirty, &created_process_id, &created_process_error) );
+	}
 
 	//----------------------------------------------------------//
 	//				Run test manuallly			    			//
@@ -387,34 +437,28 @@ void    osInit( int argc, char *argv[]  ) {
 	//Z502MakeContext( &next_context, (void*) test1a, USER_MODE );	
 	//Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
 
-	//CALL ( os_create_process("test1b",(void*) test1b,test_case_prioirty, &created_process_id, &created_process_error) );
-	//CALL (set_pcb_current_running_process("test1b",(void*)test1b, test_case_prioirty,&created_process_id));					//set current running process. Used in GET_PROCESS_ID
-	//Z502MakeContext( &next_context, (void*) test1b, USER_MODE );	
-	//Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
 	
+	//CALL ( os_create_process("test1b",(void*) test1b,test_case_prioirty, &created_process_id, &created_process_error) );
+
 	//CALL ( os_create_process("test1c",(void*) test1c,test_case_prioirty, &created_process_id, &created_process_error) );
 
-	CALL ( os_create_process("test1d",(void*) test1d,test_case_prioirty, &created_process_id, &created_process_error) );
+	//CALL ( os_create_process("test1d",(void*) test1d,test_case_prioirty, &created_process_id, &created_process_error) );
+
+	//CALL ( os_create_process("test1e",(void*) test1e,test_case_prioirty, &created_process_id, &created_process_error) );
+
+	CALL ( os_create_process("test1f",(void*) test1f,test_case_prioirty, &created_process_id, &created_process_error) );
 	
 }                                               // End of osInit
 
 
 void	os_create_process(char* process_name, void	*starting_address, INT32 priority, INT32 *process_id, INT32 *error)
 {
-	 //void						*next_context;
 	 INT32						legal_process;
 	 ProcessControlBlock		*newPCB;
 	 
-	 LockPrinter(&printer_lock_result);
-	 if (PCB_Current_Running_Process != NULL) {
-		 process_printer("Create",-1,PCB_Current_Running_Process->process_id,1,1,-1,-1,-1,-1) ;
-	 }
-	 else {
-		 process_printer("Create",-1,-1,1,1,-1,-1,-1,-1) ;
-	 }
+	
+	 CALL( process_printer("Create",-1,-1,-1,CREATE_BEFORE) );
 	 
-	 UnLockPrinter(&printer_lock_result);
-
 	 if ( (legal_process = check_legal_process(process_name,priority)) != PROCESS_LEGAL) {    // if not legal write error then return
 		 *error = legal_process;
 		 return;
@@ -440,9 +484,10 @@ void	os_create_process(char* process_name, void	*starting_address, INT32 priorit
 	*process_id = global_process_id;														// prepare for return values
 	*error = PROCESS_CREATED_SUCCESS;
 
-	Z502MakeContext( &newPCB->context, (void*) starting_address, USER_MODE );	
+	CALL( Z502MakeContext( &newPCB->context, (void*) starting_address, USER_MODE ) );	
 
-	
+	CALL( process_printer("Create",-1,-1,newPCB->process_id,CREATE_AFTER) );
+
 	CALL(make_ready_to_run(&ReadyQueueHead,newPCB) );												// whenever new process created, put into ready queue
 
 }
@@ -468,47 +513,39 @@ INT32	check_legal_process(char* process_name, INT32 initial_priority)
 void start_timer(long *sleepTime) 
 {
 	INT32		Time;														// get current time assigned to 
-	INT32		Timer_Status;
 	INT32		*new_update_time = NULL;									// for Relative time from new head after put into Ready queue
 	BOOL		loop_wait_ReadyQueue_filled = TRUE;
-	ProcessControlBlock *prev_Head = TimerQueueHead;						// to get timer of HeadTimerQueue. Needed for updatding Timer when changes in header
+	ProcessControlBlock *prev_Head;						// to get timer of HeadTimerQueue. Needed for updatding Timer when changes in header
 
 	MEM_READ (Z502ClockStatus, &Time);								        // get current time
 	
 	//----------------------------------------------------------------------//
 	//	PCB_Current_Running_Process <-- ReadyQueue Head from dispatcher     //
 	//----------------------------------------------------------------------//
-	PCB_Current_Running_Process->wakeup_time = Time + (INT32) (*sleepTime);					// Set absolute time to PCB
-	PCB_Current_Running_Process->state	= PROCESS_STATE_SLEEP;								// Current PCB still points to ReadyQueue Head
+	PCB_Current_Running_Process->wakeup_time = Time + (INT32) (*sleepTime);						// Set absolute time to PCB
+	PCB_Current_Running_Process->state	= PROCESS_STATE_SLEEP;									// Current PCB still points to ReadyQueue Head
 
-
-	CALL( LockTimer(&lock_switch_thread_result) );
-	PCB_Transfer_Ready_To_Timer = DeQueue(&ReadyQueueHead);														// Remove from ReadyQueue so no need to point
-
-	CALL( AddToTimerQueue(&TimerQueueHead, PCB_Transfer_Ready_To_Timer) );					// then Add to Timer queue
+	PCB_Transfer_Ready_To_Timer = PCB_Current_Running_Process;													
 	
-	CALL( LockPrinter(&printer_lock_result) );
-	if (PCB_Current_Running_Process != NULL) {
-		 process_printer("Waiting",-1,PCB_Current_Running_Process->process_id,1,1,-1,-1,-1,-1) ;
-	}
-	else  {
-		 process_printer("Waiting",-1,-1,1,1,-1,-1,-1,-1) ;
-	}
-	CALL( UnLockPrinter(&printer_lock_result) );
+	CALL( LockTimer(&timer_queue_result) );
 	
-	CALL( UnLockTimer(&lock_switch_thread_result) );
-
-	if (prev_Head == NULL) {                                            // no process in timerQueue
+	CALL( process_printer("Waiting",-1,-1,-1,START_TIMER_BEFORE) );
+	prev_Head = TimerQueueHead;
+	
+	CALL( AddToTimerQueue(&TimerQueueHead, PCB_Transfer_Ready_To_Timer) );						// then Add to Timer queue
+	
+	CALL( process_printer("Waiting",-1,-1,-1,START_TIMER_AFTER) );
+	
+	if (prev_Head == NULL) {                                            // no process in timerQueue for main test
 			
 		// debug
 		// printf("... Waiting... NULL TimerQueue... Process sleep: %d \n",PCB_Current_Running_Process->process_id);
 		// printf("... Waiting... NULL TimerQueue... new timer: %d, current time: %d , wake up time %d \n",*new_update_time,Time,PCB_Current_Running_Process->wakeup_time);
-		//debug
+		// debug
 			
 		MEM_WRITE( Z502TimerStart, sleepTime );							// go ahead and set timer
 	}
-	else if ( (prev_Head->wakeup_time > TimerQueueHead->wakeup_time) ||  // compare wakeup time of new inserted with 1st in timer queue
-		( ! IsExistsProcessIDQueue(TimerQueueHead,prev_Head->process_id)) ) {    // in case prev_head goes ReadyQueue        
+	else if ( (prev_Head->wakeup_time > TimerQueueHead->wakeup_time) ) {
 			
 		new_update_time = (INT32*) malloc(sizeof(INT32));
 		MEM_READ (Z502ClockStatus, &Time);
@@ -522,20 +559,45 @@ void start_timer(long *sleepTime)
 		}
 		free(new_update_time);
 	}
-		
+	
+	CALL( UnLockTimer(&timer_queue_result) );	
 	CALL( dispatcher() );
 
 }
 
 void make_ready_to_run(ProcessControlBlock **head_of_ready, ProcessControlBlock *pcb) 
 {
-	CALL( AddToReadyQueue(&ReadyQueueHead,pcb) );
-
-	if ( strcmp(pcb->process_name, "test1c") == 0 ) {
-		CALL( dispatcher() );
+	
+	CALL( LockReady(&ready_queue_result) );
+	if (!use_priority_queue) {
+		CALL( AddToReadyQueueNotPriority(&ReadyQueueHead,pcb) );
+	} 
+	else {
+		CALL( AddToReadyQueue(&ReadyQueueHead,pcb) );
 	}
-	else if ( strcmp(pcb->process_name, "test1d") == 0 ) {
-		CALL( dispatcher() );
+	CALL( UnLockReady(&ready_queue_result) );
+
+	if (already_run_main_test == FALSE) {
+		already_run_main_test= TRUE;
+		if ( strcmp(pcb->process_name, "test1b") == 0 ) {
+			CALL( dispatcher() );
+		}
+		else if ( strcmp(pcb->process_name, "test1c") == 0 ) {
+			use_priority_queue = FALSE;
+			CALL( dispatcher() );
+		}
+		else if ( strcmp(pcb->process_name, "test1d") == 0 ) {
+			use_priority_queue = TRUE;
+			CALL( dispatcher() );
+		}
+		else if ( strcmp(pcb->process_name, "test1e") == 0 ) {
+			use_priority_queue = TRUE;
+			CALL( dispatcher() );
+		}
+		else if ( strcmp(pcb->process_name, "test1f") == 0 ) {
+			use_priority_queue = TRUE;
+			CALL( dispatcher() );
+		}
 	}
 
 }
@@ -545,9 +607,9 @@ void terminate_proccess_id(INT32 process_id, INT32* error_return)
 	INT32	Time;
 	INT32	*new_start_timer;
 
-	CALL( LockPrinter(&printer_lock_result) );
-	CALL( process_printer("Kill",-1,-1,1,1,-1,-1,-1,-1) );
-	CALL( UnLockPrinter(&printer_lock_result) );
+	
+	CALL( process_printer("Kill",-1,process_id,-1,TERMINATE_BEFORE) );
+	
 
 	if ( !IsExistsProcessIDArray(PCB_Table,  process_id, number_of_processes_created) ) {							//invalid process_id
 		*error_return = PROCESS_TERMINATE_INVALID_PROCESS_ID;
@@ -556,14 +618,14 @@ void terminate_proccess_id(INT32 process_id, INT32* error_return)
 	else {																					
 
 		if (IsExistsProcessIDQueue(ReadyQueueHead,process_id) ) {
-			CALL( LockTimer(&lock_switch_thread_result) );
+			CALL(LockReady(&ready_queue_result) );
 			CALL(RemoveProcessFromQueue(&ReadyQueueHead,process_id) );
-			CALL( UnLockTimer(&lock_switch_thread_result) );
+			CALL(UnLockReady(&ready_queue_result) );
 		}
 		if (IsExistsProcessIDQueue(TimerQueueHead,process_id) ) {
-			CALL( LockTimer(&lock_switch_thread_result) );
+			CALL(LockTimer(&timer_queue_result) );
 			CALL( RemoveProcessFromQueue(&TimerQueueHead,process_id) );						//remove from timer queue
-			CALL( UnLockTimer(&lock_switch_thread_result) );
+			
 
 			MEM_READ (Z502ClockStatus, &Time);	
 			new_start_timer = (INT32*) malloc(sizeof(INT32));
@@ -576,13 +638,13 @@ void terminate_proccess_id(INT32 process_id, INT32* error_return)
 			}
 			free(new_start_timer);
 			
+			CALL(UnLockTimer (&timer_queue_result) );
 		}
 
-		CALL( LockTimer(&lock_switch_thread_result) );										// remove from PCB table
-		CALL( RemoveFromArray(PCB_Table,process_id,number_of_processes_created) );
-		PCB_Current_Running_Process = ReadyQueueHead;
-		last_terminate_process_id = process_id;
-		CALL( UnLockTimer(&lock_switch_thread_result) );
+		CALL( process_printer("Kill",-1,process_id,-1,TERMINATE_AFTER) );
+											
+		CALL( RemoveFromArray(PCB_Table,process_id,number_of_processes_created) );			// remove from PCB table
+		
 		*error_return = ERR_SUCCESS;														//success
 
 		return;
@@ -593,83 +655,53 @@ void terminate_proccess_id(INT32 process_id, INT32* error_return)
 
 void dispatcher() {
 	
-	INT32              status;
 	INT32			   Time;
 	INT32			   *new_update_time;										// for Relative time from new head after put into Ready queue
 	ProcessControlBlock	*tmp = NULL;											
 
-
 	while (IsQueueEmpty(ReadyQueueHead)) {
+		//debug
+		//MEM_READ(Z502ClockStatus, &Time);	
+		//debug
 
-		
-		CALL( LockTimer(&lock_switch_thread_result) );	
-		new_update_time = (INT32*) malloc(sizeof(INT32));
-		MEM_READ(Z502ClockStatus, &Time);			
-		
-		tmp = TimerQueueHead;												// not in ReadyQueue so shold be in TimerQueue
-		if ( (tmp == NULL) && (PCB_Current_Running_Process != NULL) ) {
-			 if ( (CountActiveProcesses(PCB_Table,number_of_processes_created) == 1)  &&
-				 (last_terminate_process_id != PCB_Current_Running_Process->process_id) )
-			{	//only one process left. Terminate all other thread in test1c, 1d
-				CALL( UnLockTimer(&lock_switch_thread_result) );
-				Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &PCB_Current_Running_Process->context );		//switch context always by Current_Running_Process
-			}
-			CALL( UnLockTimer(&lock_switch_thread_result) );
-			return;
+		//-------------------------------------------------//
+		//	test1e: all in suspend list. Nothing wake up   //
+		//-------------------------------------------------//
+		if ( (IsQueueEmpty(TimerQueueHead)) &&
+			(! IsListEmpty (SuspendListHead)) && 
+			(PCB_Current_Running_Process == NULL) ) {
+				printf("Test1e: Self-Terminate Allowed. I Myself test1e Suspends Myself. No One wakes me up then the Program Halts... \n");
+				CALL(Z502Halt());
 		}
-		
-		*new_update_time = tmp->wakeup_time - Time;							// there: tmp== NULL or tmp->wakeup_time > Time
-			
-		if (*new_update_time > 0) {										// if time is not pass
-			MEM_WRITE(Z502TimerStart, new_update_time);						// set timer based on new timer queue head
-			//debug
-			//printf("... Dispatcher... new_update_time: %d, wakeup time %d \n",*new_update_time, tmp->wakeup_time);
-			//debug
-		}
-		else {															// time already pass
-			MEM_WRITE(Z502TimerStart, &generate_interrupt_immediately);
-		}
-
-		CALL(Z502Idle());
-		CALL( UnLockTimer(&lock_switch_thread_result) );
-
+		CALL();
 	}
 
-	CALL( LockTimer(&lock_switch_thread_result) );
-
-	CALL( LockPrinter(&printer_lock_result) );
-
-	if (PCB_Current_Running_Process != NULL) {
-		 process_printer("Run",-1,PCB_Current_Running_Process->process_id,1,1,-1,-1,-1,-1) ;
-	}
-	else { 
-		 process_printer("Run",-1,-1,1,1,-1,-1,-1,-1) ;
-	}
-	CALL( UnLockPrinter(&printer_lock_result) );
-
-	PCB_Current_Running_Process = ReadyQueueHead; 
-
+	CALL( LockReady(&ready_queue_result) );										// do not put Lock before while because Interrupt handler might wants to lock while loop 
+																				// then wait forever				
+	 
+	CALL ( process_printer("Run",-1,-1,-1,DISPATCH_BEFORE)  );
 	
+	
+	PCB_Current_Running_Process = DeQueue(&ReadyQueueHead);												// take out from ReadyQueue
 	PCB_Current_Running_Process->state = PROCESS_STATE_RUNNING;											// make running process
-	if ( (PCB_Current_Running_Process != NULL) && (ReadyQueueHead != NULL) && 
-		(PCB_Current_Running_Process->process_id == ReadyQueueHead->process_id) )		{				// run when same process_id. Otherwise already run
 
-			CALL( UnLockTimer(&lock_switch_thread_result) );
-			if(interrupt_level > 0) { return; };														// interrupt is running
-			Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &PCB_Current_Running_Process->context );		//switch context always by Current_Running_Process
-	}
-
+	CALL ( process_printer("Run",-1,-1,-1,DISPATCH_AFTER) );
 	
+	CALL( UnLockReady(&ready_queue_result) );
+	
+	Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &PCB_Current_Running_Process->context );		//switch context always by Current_Running_Process
+
 }
 
-void	process_printer(char* action, INT32 target_process_id, INT32 running_process_id, // process_id or target = -1
-						INT32 waiting_mode,INT32 ready_mode, INT32 suspended_mode, INT32 swapped_mode,// means does not print out in state printer
-						INT32 terminated_process_id, INT32 new_process_id) 
+void	process_printer(char* action, INT32 target_process_id,				// -1 means does not print out in state printer
+						INT32 terminated_process_id, INT32 new_process_id, INT32 where_to_print) 
 {
 	INT32					Time;
-	ProcessControlBlock		*readyQueue = ReadyQueueHead;			// for ready mode
-	ProcessControlBlock		*timerQueue = TimerQueueHead;			// for waiting mode
+	ProcessControlBlock		*readyQueue;			// for ready mode
+	ProcessControlBlock		*timerQueue;			// for waiting mode
+	ProcessControlBlock		*suspendList;			// for suspend mode
 
+	CALL( LockPrinter(&printer_lock_result) );
 	MEM_READ(Z502ClockStatus, &Time);									
 	CALL(SP_setup( SP_TIME_MODE, Time) );
 
@@ -681,8 +713,9 @@ void	process_printer(char* action, INT32 target_process_id, INT32 running_proces
 	if (target_process_id != -1)
 		CALL(SP_setup( SP_TARGET_MODE, target_process_id) );
 
-	if (running_process_id != -1)
-		CALL(SP_setup( SP_RUNNING_MODE, running_process_id) );
+	if ( (PCB_Current_Running_Process!= NULL) && 
+		(!IsKilledProcess(PCB_Table, PCB_Current_Running_Process->process_id, number_of_processes_created) )) // check whether currrent process killed then do not print killed one as run
+		CALL(SP_setup( SP_RUNNING_MODE, PCB_Current_Running_Process->process_id) );
 
 	if (terminated_process_id != -1)
 		CALL(SP_setup( SP_TERMINATED_MODE, terminated_process_id) );
@@ -694,34 +727,104 @@ void	process_printer(char* action, INT32 target_process_id, INT32 running_proces
 	// Print queue, table
 	// --------------------
 	
-	if (waiting_mode != -1) {
-		if (!IsQueueEmpty(TimerQueueHead)) {							// print only queue is not blank
-			while (timerQueue != NULL) {
-				CALL( SP_setup( SP_WAITING_MODE,timerQueue->process_id) ) ;
-				timerQueue = timerQueue->nextPCB;
-			}
+	if (!IsQueueEmpty(TimerQueueHead)) {							// print only queue is not blank
+		
+		timerQueue = TimerQueueHead;
+		
+		while (timerQueue != NULL) {
+			CALL( SP_setup( SP_WAITING_MODE,timerQueue->process_id) ) ;
+			timerQueue = timerQueue->nextPCB;
 		}
 	}
 	
-	if ( ready_mode != -1) {
-		if (!IsQueueEmpty(ReadyQueueHead)) {							// print only queue is not blank
-			while (readyQueue != NULL) {
-				CALL( SP_setup( SP_READY_MODE,readyQueue->process_id) );
-				readyQueue = readyQueue->nextPCB;
-			}
+	if (!IsQueueEmpty(ReadyQueueHead)) {							// print only queue is not blank
+
+		readyQueue = ReadyQueueHead;
+		
+		while (readyQueue != NULL) {
+			CALL( SP_setup( SP_READY_MODE,readyQueue->process_id) );
+			readyQueue = readyQueue->nextPCB;
 		}
 	}
-
-	if (swapped_mode != -1) {}
 	
-	if (suspended_mode != -1) {}
+	
+	if (!IsListEmpty(SuspendListHead)) {							// print only queue is not blank
 
-	CALL( printf("\n-------------------------scheduler_printer Output------------------------\n") );
+		suspendList = SuspendListHead;
+
+		while (suspendList != NULL) {
+			CALL( SP_setup( SP_SUSPENDED_MODE,suspendList->process_id) );
+			suspendList = suspendList->nextPCB;
+		}
+	}
+	
+	switch (where_to_print)
+	{
+	case CREATE_BEFORE:
+		CALL( printf("\n--------------------------Before Creating Process------------------------\n") );
+		break;
+
+	case CREATE_AFTER:
+		CALL( printf("\n--------------------------After Creating Process-------------------------\n") );
+		break;
+
+	case START_TIMER_AFTER:
+		CALL( printf("\n--------------------------After Start Timer------------------------------\n") );
+		break;
+
+	case START_TIMER_BEFORE:
+		CALL( printf("\n--------------------------Before Start Timer-----------------------------\n") );
+		break;
+
+	case DISPATCH_BEFORE:
+		CALL( printf("\n--------------------------Before Dispatch--------------------------------\n") );
+		break;
+
+	case DISPATCH_AFTER:
+		CALL( printf("\n--------------------------After Dispatch---------------------------------\n") );
+		break;
+
+	case INTERRUPT_AFTER:
+		CALL( printf("\n--------------------------After Interrupt---------------------------------\n") );
+		break;
+
+	case INTERRUPT_BEFORE:
+		CALL( printf("\n--------------------------Before Interrupt--------------------------------\n") );
+		break;
+
+	case TERMINATE_BEFORE:
+		CALL( printf("\n--------------------------Before Terminate--------------------------------\n") );
+		break;
+
+	case TERMINATE_AFTER:
+		CALL( printf("\n--------------------------After Terminate---------------------------------\n") );
+		break;
+
+	case RESUME_BEFORE:
+		CALL( printf("\n--------------------------Before Resume-----------------------------------\n") );
+		break;
+
+	case RESUME_AFTER:
+		CALL( printf("\n--------------------------After Resume------------------------------------\n") );
+		break;
+
+	case SUSPEND_BEFORE:
+		CALL( printf("\n--------------------------Before Suspend----------------------------------\n") );
+		break;
+
+	case SUSPEND_AFTER:
+		CALL( printf("\n--------------------------After Suspend-----------------------------------\n") );
+		break;
+		
+	default:
+		break;
+	}
+
     CALL( SP_print_header() );
     CALL( SP_print_line() );
-    CALL( printf("-------------------------------------------------------------------------\n\n") );
+    CALL( printf("--------------------------------------------------------------------------\n\n") );
 
-
+	CALL( UnLockPrinter(&printer_lock_result) );
 }
 
 void LockTimer (INT32 *timer_lock_result){	
@@ -732,10 +835,182 @@ void UnLockTimer (INT32 *timer_lock_result){
 	READ_MODIFY( MEMORY_INTERLOCK_BASE + PROCESS_TIMER_LOCK, DO_UNLOCK, SUSPEND_UNTIL_LOCKED, timer_lock_result );
 }
 
+void LockReady (INT32 *ready_lock_result){	
+	READ_MODIFY( MEMORY_INTERLOCK_BASE + PROCESS_READY_LOCK, DO_LOCK, SUSPEND_UNTIL_LOCKED, ready_lock_result );
+}
+
+void UnLockReady (INT32 *ready_lock_result){
+	READ_MODIFY( MEMORY_INTERLOCK_BASE + PROCESS_READY_LOCK, DO_UNLOCK, SUSPEND_UNTIL_LOCKED, ready_lock_result );
+}
+
+void LockSuspend (INT32 *suspend_lock_result){	
+	READ_MODIFY( MEMORY_INTERLOCK_BASE + PROCESS_READY_LOCK, DO_LOCK, SUSPEND_UNTIL_LOCKED, suspend_lock_result );
+}
+
+void UnLockSuspend (INT32 *suspend_lock_result){
+	READ_MODIFY( MEMORY_INTERLOCK_BASE + PROCESS_READY_LOCK, DO_UNLOCK, SUSPEND_UNTIL_LOCKED, suspend_lock_result );
+}
+
 void LockPrinter (INT32 *printer_lock_result) {
 	READ_MODIFY( MEMORY_INTERLOCK_BASE + PRINTER_LOCK, DO_LOCK, SUSPEND_UNTIL_LOCKED, printer_lock_result );
 }
 
 void UnLockPrinter(INT32 *printer_lock_result) {
 	READ_MODIFY( MEMORY_INTERLOCK_BASE + PRINTER_LOCK, DO_UNLOCK, SUSPEND_UNTIL_LOCKED, printer_lock_result );
+}
+
+INT32	check_legal_process_suspend(INT32 process_id) 
+{
+	if (!IsExistsProcessIDArray(PCB_Table, process_id, number_of_processes_created) )					// if this suspend process_id is not even in table
+		return PROCESS_SUSPEND_INVALID_PROCESS_ID;
+
+	if ( IsExistsProcessIDList(SuspendListHead, process_id) ) {
+		return PROCESS_SUSPEND_INVALID_SUSPENDED;
+	}
+	
+	if ( ( !IsExistsProcessIDQueue(ReadyQueueHead, process_id) ) &&										// if in table but cannot find process in ReadyQueue to Suspend
+		 ( !IsExistsProcessIDQueue(TimerQueueHead, process_id) ) ) {									// updated Oct 5 cannot find in TimerQueue also
+		if (PCB_Current_Running_Process == NULL)																	
+			return PROCESS_SUSPEND_INVALID_PROCESS_ID;
+		else {																							// not in ReadyQueue but maybe is a Current running PCB
+			if (PCB_Current_Running_Process->process_id != process_id) 
+				return PROCESS_SUSPEND_INVALID_PROCESS_ID;												// should mantain Current PCB point to ReadyQueue
+			else																						// suspend self
+				return PROCESS_SUSPEND_LEGAL;															// suspend current running
+		}
+	}
+	else if ( ( !IsExistsProcessIDQueue(ReadyQueueHead, process_id) ) ||								// if exists in either ReadyQueue or TimerQueue then fine
+		 ( !IsExistsProcessIDQueue(TimerQueueHead, process_id) ) ) {									
+		return PROCESS_SUSPEND_LEGAL;
+	}
+
+	return PROCESS_SUSPEND_INVALID_PROCESS_ID;
+
+}
+
+void suspend_process_id(INT32  process_id, INT32 *process_error_return)
+{
+	INT32						legal_suspend_process; 
+	BOOL						in_ready_queue;
+	BOOL						in_timer_queue;
+	INT32						*new_update_time;
+	INT32						Time;
+	ProcessControlBlock			*prev_timer_head;
+
+	if ( (legal_suspend_process = check_legal_process_suspend(process_id)) != PROCESS_SUSPEND_LEGAL) {	// not a legal process  
+		*process_error_return  =  legal_suspend_process;
+		return;
+	}
+	CALL(process_printer("Suspend",process_id,-1,-1,SUSPEND_BEFORE) );
+
+	if (PCB_Current_Running_Process->process_id == process_id) {                                       // suspend self
+		CALL(LockSuspend(&suspend_list_result));
+		PCB_Current_Running_Process->state = PROCESS_STATE_SUSPEND;
+		AddToSuspendList(&SuspendListHead, PCB_Current_Running_Process);							  // there is nothing left to run	
+		CALL(UnLockSuspend(&suspend_list_result));
+		CALL( dispatcher());																		  // let another process run				
+		
+	}
+	else {																							   // suspend another process
+		CALL( LockTimer(&timer_queue_result) );
+		in_timer_queue = IsExistsProcessIDQueue(TimerQueueHead,process_id);
+		if (in_timer_queue) {
+			prev_timer_head = TimerQueueHead;														// to record Timer interrupt
+
+			PCB_Transfer_Timer_To_Suspend = PullProcessFromQueue(&TimerQueueHead,process_id); 
+			PCB_Transfer_Timer_To_Suspend->state = PROCESS_STATE_SUSPEND;
+
+			if (prev_timer_head != TimerQueueHead) {												// update TimerQueue when chaning in header
+				if (TimerQueueHead != NULL) {														// just take out the header	
+					new_update_time = (INT32*) malloc(sizeof(INT32));
+					MEM_READ(Z502ClockStatus, &Time);			
+					*new_update_time = TimerQueueHead->wakeup_time - Time;	
+					if (*new_update_time > 0) {														// if time is not pass
+						MEM_WRITE(Z502TimerStart, new_update_time);									// set timer based on new timer queue head
+						//debug
+						//printf("... Suspend... new_update_time: %d \n",*new_update_time);
+						//debug
+					}
+					else {																			// time already pass
+						MEM_WRITE(Z502TimerStart, &generate_interrupt_immediately);
+						//debug
+						printf("... Suspend... Time Pass... IMMEDIATELY GEN: \n");
+						//debug
+					}
+	
+					free(new_update_time);
+				}
+				else {}																				// NULL then pull the only one. Leave Timer as is it because interrupt will not process anything in Interrupt_handler
+			}
+		}
+		CALL( UnLockTimer(&timer_queue_result) );
+
+		CALL(LockReady(&ready_queue_result));
+		in_ready_queue = IsExistsProcessIDQueue(ReadyQueueHead,process_id);
+		if ( in_ready_queue ) {	
+			PCB_Transfer_Ready_To_Suspend = PullProcessFromQueue(&ReadyQueueHead,process_id); 
+			PCB_Transfer_Ready_To_Suspend->state = PROCESS_STATE_SUSPEND;
+
+			CALL(LockSuspend(&suspend_list_result));
+			AddToSuspendList(&SuspendListHead, PCB_Transfer_Ready_To_Suspend);
+			CALL(UnLockSuspend(&suspend_list_result))
+		}
+		CALL(UnLockReady(&ready_queue_result));
+
+		
+	}
+
+	CALL(process_printer("Suspend",process_id,-1,-1,SUSPEND_AFTER) );
+
+	*process_error_return = PROCESS_SUSPEND_LEGAL;
+
+}
+
+INT32	check_legal_process_resume(INT32 process_id) 
+{
+	if (!IsExistsProcessIDArray(PCB_Table, process_id, number_of_processes_created) )					// if this suspend process_id is not even in table
+		return PROCESS_RESUME_INVALID_PROCESS_ID;
+
+	if ( IsExistsProcessIDList(SuspendListHead, process_id) ) {											// in suspendList then valid resume
+		return PROCESS_RESUME_LEGAL;
+	}
+	
+	if ( IsExistsProcessIDQueue(ReadyQueueHead, process_id) ){
+		return PROCESS_RESUME_INVALID_RESUMED;															// invalid resume when in ReadyQueue because already Resume
+	}
+	
+	if ( IsExistsProcessIDQueue(TimerQueueHead, process_id) ){ 
+		return PROCESS_RESUME_INVALID_RESUMED;
+	}
+
+	if (process_id = PCB_Current_Running_Process->process_id) {
+		return PROCESS_RESUME_INVALID_RESUMED;
+	}
+
+	return PROCESS_RESUME_LEGAL;
+}
+
+
+void resume_process_id(INT32  process_id, INT32 *process_error_return)
+{
+	INT32					legal_resume_process; 
+	ProcessControlBlock		*tmp;	
+
+	if ( (legal_resume_process = check_legal_process_resume(process_id)) != PROCESS_RESUME_LEGAL) {		// not a legal process  
+		*process_error_return  =  legal_resume_process;
+		return;
+	}
+
+	
+	tmp = ReadyQueueHead;
+	CALL(LockSuspend(&suspend_list_result));
+	
+	PCB_Transfer_Suspend_To_Ready=  PullFromSuspendList(&SuspendListHead,process_id) ;	
+	PCB_Transfer_Suspend_To_Ready->state = PROCESS_STATE_READY;
+	
+	CALL(UnLockSuspend(&suspend_list_result));
+	
+	CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_Suspend_To_Ready) );
+	
+	*process_error_return =  PROCESS_RESUME_LEGAL;
 }

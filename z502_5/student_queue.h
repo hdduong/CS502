@@ -21,6 +21,7 @@ ProcessControlBlock		*CreateProcessControlBlockWithData(char *process_name, void
 BOOL					IsQueueEmpty(ProcessControlBlock *head);
 void					AddToTimerQueue(ProcessControlBlock **head, ProcessControlBlock *pcb);
 void					AddToReadyQueue(ProcessControlBlock **head, ProcessControlBlock *pcb);
+void					AddToReadyQueueNotPriority(ProcessControlBlock **head, ProcessControlBlock *pcb);
 ProcessControlBlock		*DeQueue(ProcessControlBlock **head);
 INT32					SizeQueue(ProcessControlBlock *head);
 void					PrintQueue(ProcessControlBlock *head);
@@ -28,8 +29,8 @@ void					FreePCB(ProcessControlBlock *pcb);
 void					DeleteQueue(ProcessControlBlock *head);
 BOOL					IsExistsProcessIDQueue(ProcessControlBlock *head, INT32 process_id);
 void					RemoveProcessFromQueue(ProcessControlBlock **head, INT32 process_id); 
+ProcessControlBlock		*PullProcessFromQueue(ProcessControlBlock **head, INT32 process_id); 
 
-///* Linked List */
 ProcessControlBlock		*InsertLinkedListPID(ProcessControlBlock *head, ProcessControlBlock *pcb);
 BOOL					IsExistsProcessNameArray(ProcessControlBlock *head[], char *process_name, INT32 number_of_processes);
 BOOL					IsExistsProcessIDArray(ProcessControlBlock *head[], INT32 process_id,INT32 number_of_processes);
@@ -37,3 +38,9 @@ void					RemoveFromArray(ProcessControlBlock *head[], INT32 process_id, INT32 nu
 void					RemoveLinkedList(ProcessControlBlock *head);
 INT32					GetProcessID(ProcessControlBlock *Head[], char* process_name, INT32 num_processes);
 INT32					CountActiveProcesses(ProcessControlBlock *head[], INT32 num_processes);
+
+BOOL					IsExistsProcessIDList(ProcessControlBlock *head, INT32 process_id);
+ProcessControlBlock		*PullFromSuspendList(ProcessControlBlock **head, INT32 process_id);
+BOOL					IsListEmpty(ProcessControlBlock *head);
+void					AddToSuspendList(ProcessControlBlock **head, ProcessControlBlock *pcb);
+BOOL					IsKilledProcess(ProcessControlBlock *head[], INT32 process_id, INT32 num_processes);
