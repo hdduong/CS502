@@ -439,7 +439,10 @@ void    osInit( int argc, char *argv[]  ) {
 		CALL( os_create_process("test1f",(void*) test1f,test_case_prioirty, &created_process_id, &created_process_error) );
 	}
 	else if (( argc > 1 ) && ( strcmp( argv[1], "test1g" ) == 0 ) ) {
-		CALL( os_create_process("test1g",(void*) test1f,test_case_prioirty, &created_process_id, &created_process_error) );
+		CALL( os_create_process("test1g",(void*) test1g,test_case_prioirty, &created_process_id, &created_process_error) );
+	}
+	else if (( argc > 1 ) && ( strcmp( argv[1], "test1h" ) == 0 ) ) {
+		CALL( os_create_process("test1h",(void*) test1h,test_case_prioirty, &created_process_id, &created_process_error) );
 	}
 	//----------------------------------------------------------//
 	//				Run test manuallly			    			//
@@ -464,7 +467,9 @@ void    osInit( int argc, char *argv[]  ) {
 
 	//CALL ( os_create_process("test1f",(void*) test1f,test_case_prioirty, &created_process_id, &created_process_error) );
 	
-	CALL ( os_create_process("test1g",(void*) test1g,test_case_prioirty, &created_process_id, &created_process_error) );
+	//CALL ( os_create_process("test1g",(void*) test1g,test_case_prioirty, &created_process_id, &created_process_error) );
+
+	CALL ( os_create_process("test1h",(void*) test1h,test_case_prioirty, &created_process_id, &created_process_error) );
 }                                               // End of osInit
 
 
@@ -616,6 +621,10 @@ void make_ready_to_run(ProcessControlBlock **head_of_ready, ProcessControlBlock 
 			CALL( dispatcher() );
 		}
 		else if ( strcmp(pcb->process_name, "test1g") == 0 ) {
+			use_priority_queue = TRUE;
+			CALL( dispatcher() );
+		}
+		else if ( strcmp(pcb->process_name, "test1h") == 0 ) {
 			use_priority_queue = TRUE;
 			CALL( dispatcher() );
 		}
@@ -1108,6 +1117,7 @@ void	change_process_priority(INT32 process_id, INT32 new_priority, INT32 *proces
 		}
 		
 		CALL( UnLockReady(&ready_queue_result) );
+		CALL(process_printer("Priority", process_id,-1,-1,PRIORITY_AFTER) );
 		*process_error_return = PRIORITY_LEGAL;
 	}
 
