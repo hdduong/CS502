@@ -552,7 +552,7 @@ BOOL IsKilledProcess(ProcessControlBlock *head[], INT32 process_id, INT32 num_pr
 //			       Message Queue        							//
 //------------------------------------------------------------------//
 
-Message	*CreateMessage(INT32 msg_id, INT32 target_id, INT32 source_id, INT32 actual_msg_length, char *msg_buffer, BOOL is_broadcast)
+Message	*CreateMessage(INT32 msg_id, INT32 target_id, INT32 source_id, INT32 send_length, INT32 actual_msg_length, char *msg_buffer, BOOL is_broadcast)
 {
 	Message *msg;
 
@@ -563,9 +563,10 @@ Message	*CreateMessage(INT32 msg_id, INT32 target_id, INT32 source_id, INT32 act
 	msg->target_id = target_id;
 	msg->source_id = source_id;
 	strcpy(msg->msg_buffer, msg_buffer);
+	msg->send_length = send_length;
 	msg->actual_msg_length = actual_msg_length;
 	msg->is_broadcast = is_broadcast;
-
+	msg->nextMsg = NULL;
 	return msg;
 
 }
@@ -577,12 +578,14 @@ void	AddToSentBox(ProcessControlBlock *PCB_Table[], INT32 process_id, Message *m
 
 	INT32				index = 0;
 	ProcessControlBlock *tmp;
+	Message*			add_message;
 
 	while (index <number_of_processes) {
 		if ( PCB_Table[index] != NULL)  {
 			if (PCB_Table[index]->process_id == process_id ) {
 				if (!IsExistsMessageIDQueue(PCB_Table[index]->sentBoxQueue,msg->msg_id) ) {
-				AddToMsgQueue(& (PCB_Table[index]->sentBoxQueue),msg);
+					add_message = CreateMessage(msg->msg_id,msg->target_id, msg->source_id, msg->send_length,msg->actual_msg_length,msg->msg_buffer,msg->is_broadcast);
+					AddToMsgQueue(& (PCB_Table[index]->sentBoxQueue),add_message);
 				}
 			}
 		}
@@ -595,12 +598,15 @@ void	AddToInbox(ProcessControlBlock *PCB_Table[], INT32 process_id, Message *msg
 
 	INT32				index = 0;
 	ProcessControlBlock *tmp;
+	Message*			add_message;
+
 
 	while (index <number_of_processes) {
 		if ( PCB_Table[index] != NULL)  {
 			if (PCB_Table[index]->process_id == process_id ) {
 				if (!IsExistsMessageIDQueue(PCB_Table[index]->inboxQueue,msg->msg_id) ) {
-					AddToMsgQueue(& (PCB_Table[index]->inboxQueue),msg);
+					add_message = CreateMessage(msg->msg_id,msg->target_id, msg->source_id, msg->send_length,msg->actual_msg_length,msg->msg_buffer,msg->is_broadcast);
+					AddToMsgQueue(& (PCB_Table[index]->inboxQueue),add_message);
 				}
 			}
 		}
@@ -674,7 +680,7 @@ BOOL	IsExistsMessageIDQueue(Message *head, INT32 msg_id)
 
 // return -1 then no one send me
 
-INT32	IsMyMessageInArray(Message *head[], INT32 process_id, INT32 num_messages)
+INT32	IsMyMessageInArray(Message *head[], INT32 process_id, Message *inbox, INT32 num_messages)
 {
 	INT32	count = 0;
 
@@ -683,12 +689,22 @@ INT32	IsMyMessageInArray(Message *head[], INT32 process_id, INT32 num_messages)
 		return -1;
 
 	while ( count < num_messages )   {
-		if ( (head[count] != NULL) && (head[count]->target_id == process_id) ) {
+		if ( (head[count] != NULL) 
+			&& ( 
+				(head[count]->target_id == process_id)												    // send directly to me
+				||
+				( (head[count]->target_id == -1)														// or broadcast message
+					&& 
+					(head[count]->source_id != process_id) )
+				)
+			&& (! IsExistsMessageIDQueue(inbox,head[count]->msg_id)) ) {								// new message
 			return count;	
 		}
 		count++;
 	}      
 
-	if (head[count] == NULL) 
+	if ( (head[count] == NULL)  || (count >= MAX_MESSAGES) )
 		return -1;
 }
+
+//INT32	IsExistNewMessage(Message *head[], INT32 process_id, Message *inbox, INT32 num_messages

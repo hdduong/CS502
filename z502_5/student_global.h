@@ -84,6 +84,7 @@
 #define			PROCESS_RECEIVE_ILLEGAL_PID				1L
 #define			PROCESS_RECEIVE_ILLEGAL_MSG_LENGTH		2L
 
-#define			MAX_MESSAGES							20L
+#define			MAX_MESSAGES							25L
+#define			MAX_MESSAGES_IN_QUEUE					15L
 
 #endif
