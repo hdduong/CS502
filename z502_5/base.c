@@ -1176,6 +1176,7 @@ void	change_process_priority(INT32 process_id, INT32 new_priority, INT32 *proces
 		CALL( LockPriority(&priority_lock_result) );
 		PCB_Current_Running_Process->priority = new_priority;
 		CALL( UnLockPriority(&priority_lock_result) );
+		*process_error_return = PRIORITY_LEGAL;
 		return;
 	}
 	else {																							// change priority of process in ReadyQueue, TimerQueue or maybe SuspendList
