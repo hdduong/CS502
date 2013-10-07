@@ -46,6 +46,7 @@ char                 *call_names[] = { "mem_read ", "mem_write",
 
 
 /**************************************************************** <hdduong **********************************************************************************/
+extern						INT16								Z502_MODE;
 INT32						global_process_id = 0;													// keep track of process_id  
 INT32						number_of_processes_created = 0;										// keep track of number processes created. It might need lock
 																									// = global_process_id but easier to read	
@@ -54,11 +55,16 @@ INT32						timer_queue_result;														// lock for timer queue
 INT32						suspend_list_result;													// lock for suspend list
 INT32						printer_lock_result;													// used for locking printing code
 INT32						priority_lock_result;													// used for locking priority changed code
+INT32						message_lock_result;													// used for locking global message queue
 
 INT32						generate_interrupt_immediately  = 1 ;									// use for generate interrupt when Timer passed the wake-up time
 
 BOOL						already_run_main_test = FALSE;
-BOOL						use_priority_queue = FALSE;												//use priority queue or not
+BOOL						use_priority_queue = FALSE;												// use priority queue or not
+
+Message						*Message_Table[MAX_MESSAGES];										// use to store messages exchange between processes
+INT32						global_msg_id = 0;														// keep track of number of message in the system
+INT32						number_of_message_created;												// hom many messages is stored in each process and whole OS
 
 ProcessControlBlock			*TimerQueueHead;														// TimerQueue 
 ProcessControlBlock			*ReadyQueueHead;														// ReadyQueue
@@ -92,6 +98,10 @@ void	please_charge_hardware_time() {};															// increase time function, 
 void	process_printer(char* action, INT32 target_process_id,										// -1 means does not print out in state printer
 						INT32 terminated_process_id, INT32 new_process_id, INT32 where_to_print);
 
+
+void	send_message(INT32 target_pid, char *message, INT32 send_length, INT32 *process_error_return);
+void	receive_message(INT32 source_pid, char *message, INT32 receive_length, INT32 *send_length, INT32 *send_pid, INT32 *process_error_return);
+
 void LockTimer (INT32 *timer_lock_result);
 void UnLockTimer (INT32 *timer_lock_result);
 void LockReady (INT32 *ready_lock_result);
@@ -102,6 +112,8 @@ void LockSuspend (INT32 *suspend_list_result);
 void UnLockSuspend (INT32 *suspend_list_result);
 void LockPriority (INT32 *priority_lock_result);
 void UnLockPriority (INT32 *priority_lock_result);
+void LockMessageQueue (INT32 *message_lock_result);
+void UnLockMessageQueue (INT32 *message_lock_result);
 
 
 /**************************************************************** hdduong> **********************************************************************************/
@@ -237,6 +249,16 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 	INT32				priority_process_id_arg;	 //	change priority of a process_id in CHANGE_PRIORITY
 	INT32				priority_new_arg;			 //	new priority in CHANGE_PRIORITY
 
+	INT32				send_target_pid_arg;						// target process_id in SEND_MESSAGE
+	char				msg_buffer_arg[LEGAL_MESSAGE_LENGTH];		// message buffer in SEND_MESSAGE, RECEIVE_MESSAGE
+	INT32				message_send_length_arg;					// message send length of SEND_MESSAGE, RECEIVE_MESSAGE
+		
+	INT32				receive_source_pid_arg;						// RECEIVE_MESSAGE
+	INT32				message_receive_length_arg;					// RECEIVE_MESSAGE
+	INT32				message_sender_pid_arg;						// RECEIVE_MESSAGE
+
+
+
     call_type = (short)SystemCallData->SystemCallNumber;
     if ( do_print > 0 ) {
         // same code as before
@@ -361,7 +383,34 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 			 *(INT32 *)SystemCallData->Argument[2] = process_error_arg;
 
 			break;
+		// change priority
+		case SYSNUM_SEND_MESSAGE:	
+			send_target_pid_arg = (INT32) SystemCallData->Argument[0];
+			
+			strcpy(msg_buffer_arg, (char*) SystemCallData->Argument[1]);
 
+			message_send_length_arg = (INT32) SystemCallData->Argument[2];
+
+			send_message(send_target_pid_arg,msg_buffer_arg,message_send_length_arg,&process_error_arg);
+			*(INT32 *)SystemCallData->Argument[3] = process_error_arg;
+			
+			break;
+
+		case SYSNUM_RECEIVE_MESSAGE:
+			receive_source_pid_arg = (INT32) SystemCallData->Argument[0];
+			
+			strcpy(msg_buffer_arg, (char*) SystemCallData->Argument[1]);
+
+			message_receive_length_arg = (INT32) SystemCallData->Argument[2];
+
+			receive_message(receive_source_pid_arg,msg_buffer_arg,message_receive_length_arg,
+				&message_receive_length_arg,&message_sender_pid_arg, &process_error_arg);
+			*(INT32 *)SystemCallData->Argument[3] = message_receive_length_arg;
+			*(INT32 *)SystemCallData->Argument[4] = message_sender_pid_arg;
+			*(INT32 *)SystemCallData->Argument[5] = process_error_arg;
+
+		break;
+		
 		default:  
             printf( "ERROR!  call_type not recognized!\n" ); 
             printf( "Call_type is - %i\n", call_type);
@@ -444,6 +493,9 @@ void    osInit( int argc, char *argv[]  ) {
 	else if (( argc > 1 ) && ( strcmp( argv[1], "test1h" ) == 0 ) ) {
 		CALL( os_create_process("test1h",(void*) test1h,test_case_prioirty, &created_process_id, &created_process_error) );
 	}
+	else if (( argc > 1 ) && ( strcmp( argv[1], "test1i" ) == 0 ) ) {
+		CALL( os_create_process("test1i",(void*) test1i,test_case_prioirty, &created_process_id, &created_process_error) );
+	}
 	//----------------------------------------------------------//
 	//				Run test manuallly			    			//
 	//----------------------------------------------------------//
@@ -469,7 +521,9 @@ void    osInit( int argc, char *argv[]  ) {
 	
 	//CALL ( os_create_process("test1g",(void*) test1g,test_case_prioirty, &created_process_id, &created_process_error) );
 
-	CALL ( os_create_process("test1h",(void*) test1h,test_case_prioirty, &created_process_id, &created_process_error) );
+	//CALL ( os_create_process("test1h",(void*) test1h,test_case_prioirty, &created_process_id, &created_process_error) );
+
+	CALL ( os_create_process("test1i",(void*) test1i,test_case_prioirty, &created_process_id, &created_process_error) );
 }                                               // End of osInit
 
 
@@ -625,6 +679,10 @@ void make_ready_to_run(ProcessControlBlock **head_of_ready, ProcessControlBlock 
 			CALL( dispatcher() );
 		}
 		else if ( strcmp(pcb->process_name, "test1h") == 0 ) {
+			use_priority_queue = TRUE;
+			CALL( dispatcher() );
+		}
+		else if ( strcmp(pcb->process_name, "test1i") == 0 ) {
 			use_priority_queue = TRUE;
 			CALL( dispatcher() );
 		}
@@ -1120,5 +1178,142 @@ void	change_process_priority(INT32 process_id, INT32 new_priority, INT32 *proces
 		CALL(process_printer("Priority", process_id,-1,-1,PRIORITY_AFTER) );
 		*process_error_return = PRIORITY_LEGAL;
 	}
+
+}
+
+INT32 message_send_legal(INT32 target_process_id, INT32 send_length) 
+{
+	if  (target_process_id == -1)  {									// a success broadcast message
+		if (send_length <= LEGAL_MESSAGE_LENGTH)
+			return PROCESS_SEND_SUCCESS;
+		else 
+			return PROCESS_SEND_ILLEGAL_MSG_LENGTH;
+	}
+
+	if (!IsExistsProcessIDArray(PCB_Table, target_process_id, number_of_processes_created) )					// send to illegal process
+		return PROCESS_SEND_ILLEGAL_PID;
+
+	if (send_length > LEGAL_MESSAGE_LENGTH) {																	// illegal message length
+		return PROCESS_SEND_ILLEGAL_MSG_LENGTH;
+	}
+
+	if ( (number_of_message_created + 1) > MAX_MESSAGES) {
+		return PROCESS_SEND_CREATE_OVER_MAX;
+	}
+
+	return PROCESS_SEND_SUCCESS;
+
+}
+
+void send_message(INT32 target_pid, char *message, INT32 send_length, INT32 *process_error_return) {
+
+	INT32		legal_send_message;
+	Message		*msg;
+	INT32		msg_length;
+	INT32		error_ret;
+
+	if ( (legal_send_message = message_send_legal(target_pid, send_length) ) != PROCESS_SEND_SUCCESS)  {		// not a legal send  
+		*process_error_return  =  legal_send_message;
+		return;
+	}
+
+	//--------------------------//
+	//	 message preparation    //
+	//--------------------------//			
+	
+
+	global_msg_id++;	
+																												//message_id starts at 1
+	msg_length = strlen(message);
+
+	if (target_pid == - 1) {		
+																												// broadcast
+		msg = CreateMessage(global_msg_id,target_pid,
+			PCB_Current_Running_Process->process_id ,msg_length,message,TRUE);
+	}
+
+	else if (target_pid == PCB_Current_Running_Process->process_id) {											// send self
+		msg = CreateMessage(global_msg_id,target_pid,
+			PCB_Current_Running_Process->process_id,msg_length,message, FALSE);
+
+		Message_Table[number_of_message_created] = msg;															// Message_Table starts at 0
+		
+		AddToSentBox(PCB_Table,target_pid,msg,number_of_processes_created);										// add to outbox of sent current process
+
+	}
+
+	else if (target_pid != PCB_Current_Running_Process->process_id) {											// send to another
+		msg = CreateMessage(global_msg_id,target_pid,
+			PCB_Current_Running_Process->process_id,msg_length,message, FALSE);
+
+		Message_Table[number_of_message_created] = msg;															// Message_Table starts at 0
+
+		AddToSentBox(PCB_Table,PCB_Current_Running_Process->process_id,msg,number_of_processes_created);	
+
+	}
+	
+	number_of_message_created++;																				// record sucessfully legal messages
+	*process_error_return = PROCESS_SEND_SUCCESS;
+}
+
+
+
+INT32 message_receive_legal(INT32 source_pid, char* msg, INT32 receive_length) 
+{
+
+	INT32	index;
+
+	if  (source_pid == -1)  {									// a success broadcast message
+		if (receive_length <= LEGAL_MESSAGE_LENGTH)
+			return PROCESS_RECEIVE_SUCCESS;
+		else 
+			return PROCESS_RECEIVE_ILLEGAL_MSG_LENGTH;
+	}
+
+
+	if (!IsExistsProcessIDArray(PCB_Table, source_pid, number_of_processes_created) )					// send to illegal process
+		return PROCESS_RECEIVE_ILLEGAL_PID;
+
+	if (receive_length > LEGAL_MESSAGE_LENGTH) {														// illegal message length
+		return PROCESS_RECEIVE_ILLEGAL_MSG_LENGTH;
+	}
+
+	//---------------------------------------//
+	//   find in Message GLobal sent to me   //
+	//---------------------------------------//
+	if ( ( index = IsMyMessageInArray(Message_Table,
+		PCB_Current_Running_Process->process_id,number_of_message_created) ) > -1) {						// someone sends me a message
+			if (strlen(Message_Table[index]->msg_buffer) > receive_length )									// but if message lenght is not okie	
+				return PROCESS_RECEIVE_ILLEGAL_MSG_LENGTH;													// I cannot receive it
+			else {																							// else put it in my inbox if not inbox yet
+				if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
+					Message_Table[index]->msg_id) ) {
+						AddToInbox(PCB_Table,Message_Table[index]->target_id,Message_Table[index],number_of_processes_created);
+				}
+			}
+	}
+	
+
+	return PROCESS_RECEIVE_SUCCESS;
+
+}
+
+
+void receive_message(INT32 source_pid, char *message, INT32 receive_length, INT32 *send_length, INT32 *send_pid, INT32 *process_error_return) {
+
+	INT32		legal_receive_message;
+
+	if ( (legal_receive_message = message_receive_legal(source_pid,message, receive_length) ) != PROCESS_SEND_SUCCESS)  {		// not a legal send  
+		*process_error_return  =  legal_receive_message;
+		return;
+	}
+
+	if (source_pid == -1) {
+	
+	}
+	else if (source_pid == PCB_Current_Running_Process->process_id) {
+
+	}
+	//else if (source_pid == 
 
 }

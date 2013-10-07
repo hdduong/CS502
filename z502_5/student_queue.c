@@ -19,6 +19,8 @@
 //------------------------------------------------------------------//
 
 
+
+
 ProcessControlBlock *CreateProcessControlBlockWithData(char *process_name, void *starting_address, INT32 priority, INT32 process_id)
 {
 	ProcessControlBlock *pcb;
@@ -33,6 +35,9 @@ ProcessControlBlock *CreateProcessControlBlockWithData(char *process_name, void 
 	pcb->priority = priority;
 	pcb->process_id = process_id;
 	pcb->nextPCB = NULL;
+
+	pcb->sentBoxQueue = NULL;
+	pcb->inboxQueue = NULL;
 
 	return pcb;
 
@@ -543,3 +548,147 @@ BOOL IsKilledProcess(ProcessControlBlock *head[], INT32 process_id, INT32 num_pr
 	return FALSE;
 }
 
+//------------------------------------------------------------------//
+//			       Message Queue        							//
+//------------------------------------------------------------------//
+
+Message	*CreateMessage(INT32 msg_id, INT32 target_id, INT32 source_id, INT32 actual_msg_length, char *msg_buffer, BOOL is_broadcast)
+{
+	Message *msg;
+
+	msg = (Message*) malloc(sizeof(Message));
+	if (msg == NULL) return NULL;
+
+	msg->msg_id = msg_id;
+	msg->target_id = target_id;
+	msg->source_id = source_id;
+	strcpy(msg->msg_buffer, msg_buffer);
+	msg->actual_msg_length = actual_msg_length;
+	msg->is_broadcast = is_broadcast;
+
+	return msg;
+
+}
+
+
+// add message via PCB_Table otherwise have to loop seperately in ReadyQueue, TimerQueue and SuspendQueue
+
+void	AddToSentBox(ProcessControlBlock *PCB_Table[], INT32 process_id, Message *msg,  INT32 number_of_processes) {
+
+	INT32				index = 0;
+	ProcessControlBlock *tmp;
+
+	while (index <number_of_processes) {
+		if ( PCB_Table[index] != NULL)  {
+			if (PCB_Table[index]->process_id == process_id ) {
+				if (!IsExistsMessageIDQueue(PCB_Table[index]->sentBoxQueue,msg->msg_id) ) {
+				AddToMsgQueue(& (PCB_Table[index]->sentBoxQueue),msg);
+				}
+			}
+		}
+		index ++;
+	}
+	
+}
+
+void	AddToInbox(ProcessControlBlock *PCB_Table[], INT32 process_id, Message *msg,  INT32 number_of_processes) {
+
+	INT32				index = 0;
+	ProcessControlBlock *tmp;
+
+	while (index <number_of_processes) {
+		if ( PCB_Table[index] != NULL)  {
+			if (PCB_Table[index]->process_id == process_id ) {
+				if (!IsExistsMessageIDQueue(PCB_Table[index]->inboxQueue,msg->msg_id) ) {
+					AddToMsgQueue(& (PCB_Table[index]->inboxQueue),msg);
+				}
+			}
+		}
+		index ++;
+	}
+	
+}
+
+
+void AddToMsgQueue(Message **head, Message *msg)
+{
+	Message *tmp;
+	Message *prev;
+
+	if (IsMsgQueueEmpty(*head)) 
+	{
+		*head = msg;
+		(*head)->nextMsg = NULL;
+		return;
+	}		
+
+	// add by increasing of msg_id
+	if ( (*head)->msg_id > msg->msg_id) {     //in front
+		msg->nextMsg = *head;
+		*head = msg;
+		return;	
+	}	
+
+	tmp = *head;
+	while ( (tmp != NULL) && (tmp->msg_id < msg->msg_id)) {           // <= so prev always has value
+		prev = tmp;
+		tmp = tmp->nextMsg;
+	}
+	prev->nextMsg = msg;								// insert in the Middle & End
+	msg->nextMsg = NULL;								// reset linker
+
+	if (tmp != NULL) {									// insert in the Middle
+		msg->nextMsg = tmp;
+		return;
+	}
+
+}
+
+BOOL IsMsgQueueEmpty(Message *head)
+{
+	if (head == NULL)  
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+
+
+BOOL	IsExistsMessageIDQueue(Message *head, INT32 msg_id)
+{
+	Message *tmp = head;
+	if (head == NULL)
+		return FALSE;
+
+	while (tmp!= NULL) {
+		if (tmp->msg_id == msg_id)
+			return TRUE;
+
+		tmp = tmp->nextMsg;
+	}
+
+	return FALSE;
+}
+
+
+// return -1 then no one send me
+
+INT32	IsMyMessageInArray(Message *head[], INT32 process_id, INT32 num_messages)
+{
+	INT32	count = 0;
+
+	Message *tmp = head[0];
+	if (head == NULL)
+		return -1;
+
+	while ( count < num_messages )   {
+		if ( (head[count] != NULL) && (head[count]->target_id == process_id) ) {
+			return count;	
+		}
+		count++;
+	}      
+
+	if (head[count] == NULL) 
+		return -1;
+}

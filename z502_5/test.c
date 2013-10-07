@@ -809,18 +809,18 @@ void test1j(void) {
 	SuccessExpected(Z502_REG9, "CREATE_PROCESS");
 
 	//      Send/receive a legal message to each child    
-	for (Iteration = 0; Iteration < 3; Iteration++) {
-		if (Iteration == 3) {
+	for (Iteration = 1; Iteration <= 3; Iteration++) {
+		if (Iteration == 1) {
 			td->target_pid = Z502_REG3;
-			strcpy(td->msg_sent, "message to #3");
+			strcpy(td->msg_sent, "message to #1");
 		}
-		if (Iteration == 4) {
+		if (Iteration == 2) {
 			td->target_pid = Z502_REG4;
-			strcpy(td->msg_sent, "message to #4");
+			strcpy(td->msg_sent, "message to #2");
 		}
-		if (Iteration == 5) {
+		if (Iteration == 3) {
 			td->target_pid = Z502_REG5;
-			strcpy(td->msg_sent, "message to #5");
+			strcpy(td->msg_sent, "message to #3");
 		}
 		td->send_length = 20;
 		SEND_MESSAGE(td->target_pid, td->msg_sent, td->send_length, &Z502_REG9);
@@ -836,7 +836,7 @@ void test1j(void) {
 		if (strcmp(td->msg_buffer, td->msg_sent) != 0)
 			printf("ERROR - msg sent != msg received.\n");
 
-		if (td->actual_source_pid != Z502_REG3)
+		if (td->actual_source_pid != td->target_pid )
 			printf("ERROR - source PID not correct.\n");
 
 		if (td->actual_send_length != td->send_length)
@@ -876,6 +876,7 @@ void test1j(void) {
 	TERMINATE_PROCESS(-2, &Z502_REG9);
 
 }                                                 // End of test1j     
+
 
 /**************************************************************************
 

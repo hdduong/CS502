@@ -1,9 +1,24 @@
 /*********************************************************************
 	This incude file is using by hdduong for Z502
 	Sep/08/13:		Created
-
+	Otc/06/13:		Update MessageQueue
 *********************************************************************/
 #include "global.h"
+#include "student_global.h"
+
+
+
+typedef struct StructMessage {
+	INT32				msg_id;
+	INT32				target_id;								// sent to
+	INT32				source_id;								// from
+	INT32				actual_msg_length;
+	char				msg_buffer[LEGAL_MESSAGE_LENGTH];
+	BOOL				is_broadcast;
+	struct				StructMessage							*nextMsg;
+} Message;
+
+
 
 typedef struct StructProcessControlBlock
 {
@@ -14,6 +29,9 @@ typedef struct StructProcessControlBlock
 	INT32				state;									// state of the process
 	INT32				wakeup_time;							// time to wake up
 	struct				StructProcessControlBlock				* nextPCB; 
+	
+	Message				*inboxQueue;									// receive message queue
+	Message				*sentBoxQueue;								// sent message queue
 } ProcessControlBlock;
 
 
@@ -45,3 +63,12 @@ ProcessControlBlock		*PullFromSuspendList(ProcessControlBlock **head, INT32 proc
 BOOL					IsListEmpty(ProcessControlBlock *head);
 void					AddToSuspendList(ProcessControlBlock **head, ProcessControlBlock *pcb);
 BOOL					IsKilledProcess(ProcessControlBlock *head[], INT32 process_id, INT32 num_processes);
+
+
+Message	*CreateMessage(INT32 msg_id, INT32 target_id, INT32 source_id, INT32 actual_msg_length, char *msg_buffer, BOOL is_broadcast);
+void					AddToSentBox(ProcessControlBlock *PCB_Table[], INT32 process_id, Message *msg,  INT32 number_of_processes);
+void					AddToInbox(ProcessControlBlock *PCB_Table[], INT32 process_id, Message *msg,  INT32 number_of_processes);
+void					AddToMsgQueue(Message **head, Message *msg);
+BOOL					IsMsgQueueEmpty(Message *head);
+BOOL					IsExistsMessageIDQueue(Message *head, INT32 msg_id);
+INT32					IsMyMessageInArray(Message *head[], INT32 process_id, INT32 num_messages);
