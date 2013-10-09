@@ -1021,7 +1021,7 @@ void test1l(void) {
 	if (td->actual_send_length != td->send_length)
 		printf("ERROR - send length not sent correctly.\n");
 
-	/*
+	
 	// BEGIN CASE 2 ------------------------------------------
 	printf("\n\nBegin Case 2:\n\n");
 
@@ -1066,7 +1066,7 @@ void test1l(void) {
 		printf("ERROR - source PID not correct.\n");
 	if (td->actual_send_length != td->send_length)
 		printf("ERROR - send length not sent correctly.\n");
-
+	
 	//
 	// BEGIN CASE 3 ------------------------------------------
 	printf("\n\nBegin Case 3:\n\n");
@@ -1099,7 +1099,7 @@ void test1l(void) {
 		printf("ERROR - source PID not correct.\n");
 	if (td->actual_send_length != td->send_length)
 		printf("ERROR - send length not sent correctly.\n");
-		*/
+		
 	TERMINATE_PROCESS(-2, &Z502_REG9);
 
 }                                                 // End of test1l

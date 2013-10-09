@@ -39,6 +39,7 @@
 #define			PRINTER_LOCK							4L
 #define			SUSPEND_LOCK							5L
 #define			PRIORITY_LOCK							6L
+#define			MSG_SUSPEND_LOCK						7L
 
 
 #define			PROCESS_SUSPEND_INVALID_PROCESS_ID		1L

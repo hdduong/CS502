@@ -74,4 +74,5 @@ BOOL					IsMsgQueueEmpty(Message *head);
 BOOL					IsExistsMessageIDQueue(Message *head, INT32 msg_id);
 INT32					IsMyMessageInArray(Message *head[], INT32 process_id, Message *inbox, INT32 num_messages);
 void					AddToMsgSuspendList(ProcessControlBlock **head, ProcessControlBlock *pcb);
+INT32					IsNewSendMsgInArray(Message *head[], INT32 target_pid,  INT32 source_pid, Message *inbox, INT32 num_messages);
 

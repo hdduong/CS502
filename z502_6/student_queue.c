@@ -701,6 +701,11 @@ BOOL	IsExistsMessageIDQueue(Message *head, INT32 msg_id)
 INT32	IsMyMessageInArray(Message *head[], INT32 process_id, Message *inbox, INT32 num_messages)
 {
 	INT32	count = 0;
+	INT32	maxBroadCast = 0;					
+	INT32	maxOnly = 0;																			// get most recently message sent to me
+
+	BOOL	runAssign  = FALSE;
+
 
 	Message *tmp = head[0];
 	if (head == NULL)
@@ -716,13 +721,72 @@ INT32	IsMyMessageInArray(Message *head[], INT32 process_id, Message *inbox, INT3
 					(head[count]->source_id != process_id) )
 				)
 			&& (! IsExistsMessageIDQueue(inbox,head[count]->msg_id)) ) {								// new message
-			return count;	
+			//return count;	
+				if (head[count]->target_id == process_id) {
+					maxOnly = count;
+					runAssign = TRUE;
+				}
+
+				if ((head[count]->target_id == -1)														// or broadcast message
+					&& 
+					(head[count]->source_id != process_id) ) {
+						maxBroadCast = count;
+						runAssign = TRUE;
+						break;
+				}
+
 		}
 		count++;
 	}      
+	
 
+
+	if (runAssign) return ( (maxOnly >= maxBroadCast )?maxOnly:maxBroadCast) ;
+	
 	if ( (head[count] == NULL)  || (count >= MAX_MESSAGES) )
 		return -1;
+
+	
 }
 
-//INT32	IsExistNewMessage(Message *head[], INT32 process_id, Message *inbox, INT32 num_messages
+INT32	IsNewSendMsgInArray(Message *head[], INT32 target_pid,  INT32 source_pid, Message *inbox, INT32 num_messages) {
+	INT32	count = num_messages - 1;
+	BOOL	runAssign = FALSE;
+
+
+	Message *tmp = head[0];
+	if (head == NULL)
+		return -1;
+
+	while ( count  > 0 )   {
+
+		if ( (head[count] != NULL) 
+			&& ( 
+				(head[count]->source_id == target_pid)												    // send directly to me
+				&&
+				(head[count]->target_id == source_pid)
+			
+				)) {								// new message
+					if (count < (num_messages - 1) )// just send
+						return -1;
+					else return count;
+		}
+
+
+		if ( (head[count] != NULL) 
+			&& ( 
+				(head[count]->source_id == source_pid)												    // send directly to me
+				&&
+				(head[count]->target_id == target_pid) )
+			&& (! IsExistsMessageIDQueue(inbox,head[count]->msg_id)) ) {								// new message
+				runAssign = TRUE;
+				return count;	
+		}
+
+		count--;
+	}      
+	
+	if ( (head[count] == NULL)  || (count >= MAX_MESSAGES) || (!runAssign))
+		return -1;
+
+}
