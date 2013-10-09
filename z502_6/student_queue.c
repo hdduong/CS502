@@ -7,20 +7,31 @@
 #include				"student_global.h"
 
 
-/***********************************************************************
-	This is the file implement queue used by hdduong
+/************************************************************************************
+	This is the file implement queue, linkedlist coded by hdduong
+
 	Sep/08/13:		Created
 	Sep/16/13:		Update List
-	Sep/29/13		Version z502_v4: change PCB Table from List to Array
-***********************************************************************/
+	Sep/29/13:		Version z502_v4: change PCB Table from List to Array
+	Oct/02/13:		Version z502_v5: Priority Queue
+	Oct/05/13:		Version z502_v6: update with MessageQueue for Send/Receive message
+**************************************************************************************/
 
 //------------------------------------------------------------------//
-//					TIMER QUEUE										//
+//							QUEUE									//
+//					TimerQueue, ReadyQueue							//
 //------------------------------------------------------------------//
 
 
 
+/************************************************************************************************************************************
+CreateProcessControlBlockWithData
 
+ProcessControlBlock Allocate Memory for a process. 
+Inbox and SentBox always set to NULL (not receive or send messages at first place)
+Return a pointer to a new PCB created. Return NULL if Memory Error
+Use in os_create_process
+************************************************************************************************************************************/
 ProcessControlBlock *CreateProcessControlBlockWithData(char *process_name, void *starting_address, INT32 priority, INT32 process_id)
 {
 	ProcessControlBlock *pcb;
@@ -44,8 +55,13 @@ ProcessControlBlock *CreateProcessControlBlockWithData(char *process_name, void 
 }
 
 
+/*****************************************************
+IsQueueEmpty
 
-
+Check a queue is empty or not. 
+Return TRUE if is empty. Otherwise return FALSE
+Apply to ReadyQueue, TimerQueue
+*****************************************************/
 BOOL IsQueueEmpty(ProcessControlBlock *head)
 {
 	if (head == NULL)  
@@ -55,6 +71,13 @@ BOOL IsQueueEmpty(ProcessControlBlock *head)
 	return FALSE;
 }
 
+
+/***********************************************************************
+AddToTimerQueue
+
+Add a PCB to TimerQueue. New PCB will be ordered by wakeup time.
+Wakeup time (absolute time) is the time interrupt expected ot occur.
+************************************************************************/
 
 void AddToTimerQueue(ProcessControlBlock **head, ProcessControlBlock *pcb)
 {
@@ -90,7 +113,12 @@ void AddToTimerQueue(ProcessControlBlock **head, ProcessControlBlock *pcb)
 
 }
 
-// Oct 2: Add with priority
+/***********************************************************************
+AddToReadyQueue
+
+Add a PCB to ReadyQueue. New PCB will be ordered its Priority.
+Apply from test1d to test1l (except test1k)
+************************************************************************/
 
 void AddToReadyQueue(ProcessControlBlock **head, ProcessControlBlock *pcb)
 {
@@ -122,6 +150,12 @@ void AddToReadyQueue(ProcessControlBlock **head, ProcessControlBlock *pcb)
 }
 
 
+/***********************************************************************
+AddToReadyQueueNotPriority
+
+Add a PCB to ReadyQueue. New PCB is inserted to end of the Queue.
+Apply to test1b, test1c
+************************************************************************/
 
 void AddToReadyQueueNotPriority(ProcessControlBlock **head, ProcessControlBlock *pcb)
 {
@@ -145,6 +179,11 @@ void AddToReadyQueueNotPriority(ProcessControlBlock **head, ProcessControlBlock 
 
 }
 
+/***********************************************************************
+DeQueue
+
+Take out the very first PCB of the Queue. 
+************************************************************************/
 
 ProcessControlBlock *DeQueue(ProcessControlBlock **head)
 {
@@ -163,6 +202,11 @@ ProcessControlBlock *DeQueue(ProcessControlBlock **head)
 }
 
 
+/***********************************************************************
+SizeQueue
+
+Returns number of PCBs in Queue
+************************************************************************/
 
 INT32 SizeQueue(ProcessControlBlock *head)
 {
@@ -183,16 +227,22 @@ INT32 SizeQueue(ProcessControlBlock *head)
 }
 
 
+
+/***********************************************************************
+PrintQueue
+
+Print all the process_id of all PCB in Queue
+This is obselte method. Use state_printer instead
+************************************************************************/
+
 void PrintQueue(ProcessControlBlock *head)
 {
 	if (IsQueueEmpty(head))
 	{
-		//printf("@printpcbqueue: null \n");
 		return;
 	}
 	else
 	{
-		//printf("@printpcbqueue: %d ",head->processid);
 		while (head != NULL)
 		{
 			printf("%d ",head->process_id);
@@ -202,6 +252,14 @@ void PrintQueue(ProcessControlBlock *head)
 	}
 
 }
+
+
+
+/***********************************************************************
+FreePCB
+
+Dellocate Memeory of a PCB
+************************************************************************/
 
 void FreePCB(ProcessControlBlock *pcb)
 {
@@ -214,6 +272,13 @@ void FreePCB(ProcessControlBlock *pcb)
 }
 
 
+
+/***********************************************************************
+DeleteQueue
+
+Remove Queue with all its PCB
+************************************************************************/
+
 void DeleteQueue(ProcessControlBlock *head) 
 {
 	ProcessControlBlock *tmp = head;
@@ -225,6 +290,13 @@ void DeleteQueue(ProcessControlBlock *head)
 }
 
 
+
+/***************************************************************************
+IsExistsProcessIDQueue
+
+Check whether a PCB with process_id is in Queue
+Return TRUE if in Queue. Otherwise FALSE
+****************************************************************************/
 BOOL	IsExistsProcessIDQueue(ProcessControlBlock *head, INT32 process_id)
 {
 	ProcessControlBlock *tmp = head;
@@ -242,9 +314,15 @@ BOOL	IsExistsProcessIDQueue(ProcessControlBlock *head, INT32 process_id)
 }
 
 
+
+/*******************************************************************************************************
+RemoveProcessFromQueue
+
+Delete a PCB with process_id in Queue. Always call IsExistsProcessIDQueue before RemoveProcessFromQueue.
+So this function always assumes that process_id already exists
+********************************************************************************************************/
 void	RemoveProcessFromQueue(ProcessControlBlock **head, INT32 process_id) 
 {
-	// assume that process_id already exists
 	ProcessControlBlock *prev = NULL;
 	ProcessControlBlock *tmp = *head;
 
@@ -260,18 +338,26 @@ void	RemoveProcessFromQueue(ProcessControlBlock **head, INT32 process_id)
 	}
 
 	prev->nextPCB = tmp->nextPCB;
-	//FreePCB(tmp);
+	//FreePCB(tmp);																	//do not dellocate memory there. I want to keep track in PCB_Table
+																					//PCB has TERMINATE state means this PCB already terminated.
 }
 
 
+
+
+/**********************************************************************************************************
+PullProcessFromQueue
+
+Take out a PCB with process_id in Queue. Always call IsExistsProcessIDQueue before PullProcessFromQueue.
+So this function always assumes that process_id already exists
+************************************************************************************************************/
 ProcessControlBlock	*PullProcessFromQueue(ProcessControlBlock **head, INT32 process_id) 
 {
-	// assume that process_id already exists
 
 	ProcessControlBlock *prev = NULL;
 	ProcessControlBlock *tmp = *head;
 
-	if (tmp->process_id == process_id) {											// remove the head
+	if (tmp->process_id == process_id) {											// take out the head
 		*head = (*head)->nextPCB;
 		//FreePCB(tmp);
 		return tmp;
@@ -286,10 +372,16 @@ ProcessControlBlock	*PullProcessFromQueue(ProcessControlBlock **head, INT32 proc
 	return tmp;
 }
 
+
+/**********************************************************************************************************************
+UpdateProcessPriorityQueue
+
+Update Priority of a PCB with process_id in Queue. Always call IsExistsProcessIDQueue before UpdateProcessPriorityQueue.
+So this function always assumes that process_id already exists
+***********************************************************************************************************************/
+
 void	UpdateProcessPriorityQueue(ProcessControlBlock **head, INT32 process_id,INT32 new_priority) 
 {
-	// assume that process_id already exists
-
 	ProcessControlBlock *tmp = *head;
 
 	while ( (tmp != NULL) && (tmp->process_id != process_id) ) {
@@ -304,8 +396,17 @@ void	UpdateProcessPriorityQueue(ProcessControlBlock **head, INT32 process_id,INT
 
 
 //------------------------------------------------------------------//
-//			       LINKED LIST Suspend								//
+//			       LINKED LIST										//
 //------------------------------------------------------------------//
+
+
+/***********************************************************************************
+IsExistsProcessIDList
+
+Check whether a PCB with process_id exists in LinkdedList.
+Return TRUE if it does. Otherwise returns FALSE
+************************************************************************************/
+
 BOOL	IsExistsProcessIDList(ProcessControlBlock *head, INT32 process_id)
 {
 	ProcessControlBlock *tmp = head;
@@ -323,6 +424,13 @@ BOOL	IsExistsProcessIDList(ProcessControlBlock *head, INT32 process_id)
 }
 
 
+/***********************************************************************************
+IsListEmpty
+
+Check whether a PCB with process_id exists in LinkdedList.
+Return TRUE if it does. Otherwise returns FALSE
+************************************************************************************/
+
 BOOL IsListEmpty(ProcessControlBlock *head)
 {
 	if (head == NULL)  
@@ -334,6 +442,12 @@ BOOL IsListEmpty(ProcessControlBlock *head)
 
 
 
+
+/***********************************************************************************
+AddToSuspendList
+
+Add a PCB to Suspend List. This list stores PCB when SUSPEND_PROCESS invoked.
+************************************************************************************/
 void AddToSuspendList(ProcessControlBlock **head, ProcessControlBlock *pcb)
 {
 
@@ -349,6 +463,14 @@ void AddToSuspendList(ProcessControlBlock **head, ProcessControlBlock *pcb)
 
 }
 
+
+
+/********************************************************************************************
+AddToSuspendList
+
+Add a PCB to Message Suspend List. 
+This list stores PCB when SEND_MESSAGE/ RECEIVE_MESSAGE invoked.
+*********************************************************************************************/
 
 void AddToMsgSuspendList(ProcessControlBlock **head, ProcessControlBlock *pcb)
 {
@@ -366,6 +488,11 @@ void AddToMsgSuspendList(ProcessControlBlock **head, ProcessControlBlock *pcb)
 }
 
 
+/********************************************************************************************
+PullFromSuspendList
+
+Take out from Suspend List a PCB with process_id.
+*********************************************************************************************/
 
 ProcessControlBlock *PullFromSuspendList(ProcessControlBlock **head, INT32 process_id)
 {
@@ -397,8 +524,9 @@ ProcessControlBlock *PullFromSuspendList(ProcessControlBlock **head, INT32 proce
 
 //------------------------------------------------------------------//
 //			       LINKED LIST PCB Table: Obsolete					//
+//					Store all PCB by using Arrays					//
+//						For refrence only							//
 //------------------------------------------------------------------//
-
 
 ProcessControlBlock		*InsertLinkedListPID(ProcessControlBlock *head, ProcessControlBlock *pcb) 
 {
@@ -440,12 +568,16 @@ void	RemoveLinkedList(ProcessControlBlock *head)
 //			       Array PCB Table									//
 //------------------------------------------------------------------//
 
+
+/***********************************************************************************************************
+IsExistsProcessNameArray
+
+Check whether a PCB with process_name is ever created. 
+Return TRUE if already created. Return FALSE otherwise.
+************************************************************************************************************/
 BOOL	IsExistsProcessNameArray(ProcessControlBlock *head[], char* process_name, INT32 number_of_processes)
 {
 	INT32	count = 0;
-
-	//if (head[0] == NULL)
-	//	return FALSE;
 
 	while (count <number_of_processes) {
 		if ( (head[count] != NULL) 
@@ -461,7 +593,12 @@ BOOL	IsExistsProcessNameArray(ProcessControlBlock *head[], char* process_name, I
 }
 
 
+/***********************************************************************************************************
+IsExistsProcessNameArray
 
+Check whether a PCB with process_id is ever created. 
+Return TRUE if already created. Return FALSE otherwise.
+************************************************************************************************************/
 BOOL	IsExistsProcessIDArray(ProcessControlBlock *head[], INT32 process_id, INT32 num_processes)
 {
 	INT32	count = 0;
@@ -484,7 +621,13 @@ BOOL	IsExistsProcessIDArray(ProcessControlBlock *head[], INT32 process_id, INT32
 }
 
 
-void RemoveFromArray(ProcessControlBlock *head[], INT32 process_id, INT32 num_processes)   //will move to TerminateList later
+/******************************************************************************************************************
+RemoveFromArray
+
+Set state of a PCB to TERMINATE. So this PCB ismarked not to scheduled to run anymore.
+*******************************************************************************************************************/
+
+void RemoveFromArray(ProcessControlBlock *head[], INT32 process_id, INT32 num_processes)  
 {
 	INT32	count = 0;
 	
@@ -512,6 +655,11 @@ void RemoveFromArray(ProcessControlBlock *head[], INT32 process_id, INT32 num_pr
 
 
 
+/***********************************************************************************************************
+GetProcessID
+
+Get process_id if process_name provided. Assume that process_name is already created.
+************************************************************************************************************/
 
 INT32 GetProcessID(ProcessControlBlock *head[], char* process_name, INT32 num_processes) {
 	
@@ -536,6 +684,11 @@ INT32 GetProcessID(ProcessControlBlock *head[], char* process_name, INT32 num_pr
 
 }
 
+/***********************************************************************************************************
+CountActiveProcesses
+
+Get number of processes are not terminated yet. 
+************************************************************************************************************/
 
 INT32 CountActiveProcesses(ProcessControlBlock *head[], INT32 num_processes) {
 	INT32	count = 0;
@@ -551,7 +704,14 @@ INT32 CountActiveProcesses(ProcessControlBlock *head[], INT32 num_processes) {
 	return count;
 }
 
-/* check to better printout */
+
+
+/***********************************************************************************************************
+IsKilledProcess
+
+Check whether a process was terminated. 
+Return TRUE if it was. Otherwise return FALSE
+************************************************************************************************************/
 
 BOOL IsKilledProcess(ProcessControlBlock *head[], INT32 process_id, INT32 num_processes) {
 	INT32	index = 0;
@@ -569,6 +729,14 @@ BOOL IsKilledProcess(ProcessControlBlock *head[], INT32 process_id, INT32 num_pr
 //------------------------------------------------------------------//
 //			       Message Queue        							//
 //------------------------------------------------------------------//
+
+/*****************************************************************************************************************************************************
+CreateMessage
+
+Allocate Memory for a message. 
+Return a pointer to a new message created. Return NULL if Memory Error
+is_broadcast is reserve for furture purpose. 
+*******************************************************************************************************************************************************/
 
 Message	*CreateMessage(INT32 msg_id, INT32 target_id, INT32 source_id, INT32 send_length, INT32 actual_msg_length, char *msg_buffer, BOOL is_broadcast)
 {
@@ -590,8 +758,13 @@ Message	*CreateMessage(INT32 msg_id, INT32 target_id, INT32 source_id, INT32 sen
 }
 
 
-// add message via PCB_Table otherwise have to loop seperately in ReadyQueue, TimerQueue and SuspendQueue
 
+/*****************************************************************************************************************************************************
+AddToSentBox
+
+Add a legal message going to send to process sendBox. This message is stored in global message Queue. 
+Add a message to a process via PCB_Table otherwise have to loop seperately in ReadyQueue, TimerQueue and SuspendQueue to find a process
+*******************************************************************************************************************************************************/
 void	AddToSentBox(ProcessControlBlock *PCB_Table[], INT32 process_id, Message *msg,  INT32 number_of_processes) {
 
 	INT32				index = 0;
@@ -612,6 +785,16 @@ void	AddToSentBox(ProcessControlBlock *PCB_Table[], INT32 process_id, Message *m
 	
 }
 
+
+
+
+/*****************************************************************************************************************************************************
+AddToInbox
+
+Go to global message Queue to check if new message sent to a process. If process finds a new message then add message to it inbox Queue. 
+Add one messge because this process only send only one echo per time.
+Add a message to a process via PCB_Table otherwise have to loop seperately in ReadyQueue, TimerQueue and SuspendQueue to find a process
+*******************************************************************************************************************************************************/
 void	AddToInbox(ProcessControlBlock *PCB_Table[], INT32 process_id, Message *msg,  INT32 number_of_processes) {
 
 	INT32				index = 0;
@@ -633,6 +816,12 @@ void	AddToInbox(ProcessControlBlock *PCB_Table[], INT32 process_id, Message *msg
 	
 }
 
+
+/*****************************************************************************************************************************************************
+AddToMsgQueue
+
+Add message to inbox or sentBox Queue. New message inserted at the end of Queue (Or increasing of message id).
+*******************************************************************************************************************************************************/
 
 void AddToMsgQueue(Message **head, Message *msg)
 {
@@ -668,6 +857,15 @@ void AddToMsgQueue(Message **head, Message *msg)
 
 }
 
+
+
+/*********************************************************************************
+IsMsgQueueEmpty
+
+Check a Queue has processes or not.
+Return TRUE if has at least one process. Otherwise return FALSE
+*********************************************************************************/
+
 BOOL IsMsgQueueEmpty(Message *head)
 {
 	if (head == NULL)  
@@ -678,6 +876,12 @@ BOOL IsMsgQueueEmpty(Message *head)
 }
 
 
+/*********************************************************************************
+IsExistsMessageIDQueue
+
+Check a message with message_id is in Queue or not
+Return TRUE if it in Queue. Otherwise return FALSE
+*********************************************************************************/
 
 BOOL	IsExistsMessageIDQueue(Message *head, INT32 msg_id)
 {
@@ -696,14 +900,25 @@ BOOL	IsExistsMessageIDQueue(Message *head, INT32 msg_id)
 }
 
 
-// return -1 then no one send me
+/**************************************************************************************************
+IsMyMessageInArray
+
+Check if a new message is sent to current process or not. 
+Find a new message by loop through global process queue.
+There are two cases:
+Other processes send message directly to current process by specified target process_id. (1)
+Other processes send broadcast message and current process would want to receive it.	 (2)
+With (1): would get the most recent messsage (based on message_id)
+With (2): would get the last recent message (based on messsage_id)
+Return index if a process can find a message it would want to receive. 
+Return -1 if a no process sends a message to current process. 
+***************************************************************************************************/
 
 INT32	IsMyMessageInArray(Message *head[], INT32 process_id, Message *inbox, INT32 num_messages)
 {
 	INT32	count = 0;
 	INT32	maxBroadCast = 0;					
 	INT32	maxOnly = 0;																			// get most recently message sent to me
-
 	BOOL	runAssign  = FALSE;
 
 
@@ -739,8 +954,6 @@ INT32	IsMyMessageInArray(Message *head[], INT32 process_id, Message *inbox, INT3
 		count++;
 	}      
 	
-
-
 	if (runAssign) return ( (maxOnly >= maxBroadCast )?maxOnly:maxBroadCast) ;
 	
 	if ( (head[count] == NULL)  || (count >= MAX_MESSAGES) )
@@ -749,44 +962,80 @@ INT32	IsMyMessageInArray(Message *head[], INT32 process_id, Message *inbox, INT3
 	
 }
 
-INT32	IsNewSendMsgInArray(Message *head[], INT32 target_pid,  INT32 source_pid, Message *inbox, INT32 num_messages) {
-	INT32	count = num_messages - 1;
-	BOOL	runAssign = FALSE;
 
+
+/**************************************************************************************************************************************************
+IsNewSendMsgInArray
+
+This function is coded primary to make test1l to work successfully. 
+Check whether a newer echo message is available. This deal with a case: Before a process resume (in Case 3), it already stored a previous echo
+message (from Case 2) because of suspend. Then when this process resumes, it going to to send the previous message, not the lasted message. 
+This is due to the limitation structure of Queue (FIFO). Maybe Stack (LIFO) might work.
+
+There are two cases:
+Other processes send message directly to current process by specified target process_id. If the message can be found, this message should be newer 
+than the message it is storing in process's inbox (1)
+Other processes send broadcast message and current process would want to receive it. If the message can be found, this message should be newer 
+than the message it is storing in process's inbox (2)
+With (1): would get the most recent messsage (based on message_id) which newer than lasted current message. 
+With (2): would get the last recent message (based on messsage_id) which newer than lasted current message.
+If both (1) and (2) satisfy then compare the index to get the lastest between two. 
+Return index if a process can find a message it would want to receive. 
+Return -1 if a no process sends a message to current process. 
+*************************************************************************************************************************************************/
+INT32	IsNewSendMsgInArray(Message *head[], INT32 target_pid,  INT32 source_pid, Message *inbox, INT32 num_messages) {
+	INT32	countOnly = num_messages - 1;
+	BOOL	runAssignOnly = FALSE;
+	INT32	indexOnly = - 1;
+
+	INT32	countMax = 0;
+	INT32	runAssignMax = FALSE;
+	INT32	indexMax = 0;
 
 	Message *tmp = head[0];
 	if (head == NULL)
 		return -1;
 
-	while ( count  > 0 )   {
+	while ( countOnly  > 0 )   {
 
-		if ( (head[count] != NULL) 
+		if ( (head[countOnly] != NULL) 
 			&& ( 
-				(head[count]->source_id == target_pid)												    // send directly to me
+				(head[countOnly]->source_id == target_pid)												    // send directly to me
 				&&
-				(head[count]->target_id == source_pid)
+				(head[countOnly]->target_id == source_pid)
 			
 				)) {								// new message
-					if (count < (num_messages - 1) )// just send
-						return -1;
-					else return count;
+					if (countOnly < (num_messages - 1) ) {// just send
+						runAssignOnly = FALSE;
+					}
+					else {
+						indexOnly = countOnly;
+						runAssignOnly = TRUE;
+						break;
+					}
 		}
+		countOnly--;
+	}
 
-
-		if ( (head[count] != NULL) 
+	while ( countMax  < num_messages) {
+		if ( (head[countMax] != NULL) 
 			&& ( 
-				(head[count]->source_id == source_pid)												    // send directly to me
+				(head[countMax]->source_id == source_pid)												    // send directly to me
 				&&
-				(head[count]->target_id == target_pid) )
-			&& (! IsExistsMessageIDQueue(inbox,head[count]->msg_id)) ) {								// new message
-				runAssign = TRUE;
-				return count;	
+				(head[countMax]->target_id == -1) )
+			&& (! IsExistsMessageIDQueue(inbox,head[countMax]->msg_id)) ) {								    // new message
+				runAssignMax = TRUE;
+				indexMax = countMax;
 		}
-
-		count--;
+	countMax++;
 	}      
 	
-	if ( (head[count] == NULL)  || (count >= MAX_MESSAGES) || (!runAssign))
-		return -1;
+	if ( (!runAssignMax) && (!runAssignOnly)) return -1;
+
+	if ( (runAssignOnly) && (!runAssignMax) ) return indexOnly;
+
+	if ( (runAssignMax) && (!runAssignOnly) ) return (( indexOnly == -1)?indexOnly:indexMax);
+
+	if ( (runAssignMax) && (runAssignOnly) ) return (( indexMax> indexOnly)? indexMax:indexOnly);
 
 }

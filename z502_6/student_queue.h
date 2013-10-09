@@ -9,14 +9,14 @@
 
 
 typedef struct StructMessage {
-	INT32				msg_id;
+	INT32				msg_id;									// send and receive message is kept track by global message queue. So each message has a id	
 	INT32				target_id;								// sent to
 	INT32				source_id;								// from
-	INT32				send_length;
-	INT32				actual_msg_length;
-	char				msg_buffer[LEGAL_MESSAGE_LENGTH];
-	BOOL				is_broadcast;
-	struct				StructMessage							*nextMsg;
+	INT32				send_length;							// length of the buffer
+	INT32				actual_msg_length;						// actual length of the message
+	char				msg_buffer[LEGAL_MESSAGE_LENGTH];		// data of the message
+	BOOL				is_broadcast;							// TRUE: a boardcast message. For future use
+	struct				StructMessage		*nextMsg;			
 } Message;
 
 
@@ -24,16 +24,18 @@ typedef struct StructMessage {
 typedef struct StructProcessControlBlock
 {
 	INT32				process_id;
-	char				*process_name;
-	INT32				priority;
-	void				*context;								//pointer to context for the process
-	INT32				state;									// state of the process
-	INT32				wakeup_time;							// time to wake up
-	struct				StructProcessControlBlock				* nextPCB; 
+	char				*process_name;									//name of the process. 
+	INT32				priority;										//priority of the process
+	void				*context;										//pointer to context for the process
+	INT32				state;											//state of the process
+	INT32				wakeup_time;									//time to wake up. It is the absolute time. Expected this time the interrupt occured
+	struct				StructProcessControlBlock	* nextPCB; 
 	
 	Message				*inboxQueue;									// receive message queue
-	Message				*sentBoxQueue;								// sent message queue
+	Message				*sentBoxQueue;									// sent message queue
 } ProcessControlBlock;
+
+
 
 
 ProcessControlBlock		*CreateProcessControlBlockWithData(char *process_name, void *starting_address, INT32 priority , INT32 process_id);
@@ -51,6 +53,8 @@ void					RemoveProcessFromQueue(ProcessControlBlock **head, INT32 process_id);
 ProcessControlBlock		*PullProcessFromQueue(ProcessControlBlock **head, INT32 process_id); 
 void					UpdateProcessPriorityQueue(ProcessControlBlock **head, INT32 process_id,INT32 new_priority); 
 
+
+
 ProcessControlBlock		*InsertLinkedListPID(ProcessControlBlock *head, ProcessControlBlock *pcb);
 BOOL					IsExistsProcessNameArray(ProcessControlBlock *head[], char *process_name, INT32 number_of_processes);
 BOOL					IsExistsProcessIDArray(ProcessControlBlock *head[], INT32 process_id,INT32 number_of_processes);
@@ -59,11 +63,14 @@ void					RemoveLinkedList(ProcessControlBlock *head);
 INT32					GetProcessID(ProcessControlBlock *Head[], char* process_name, INT32 num_processes);
 INT32					CountActiveProcesses(ProcessControlBlock *head[], INT32 num_processes);
 
+
+
 BOOL					IsExistsProcessIDList(ProcessControlBlock *head, INT32 process_id);
 ProcessControlBlock		*PullFromSuspendList(ProcessControlBlock **head, INT32 process_id);
 BOOL					IsListEmpty(ProcessControlBlock *head);
 void					AddToSuspendList(ProcessControlBlock **head, ProcessControlBlock *pcb);
 BOOL					IsKilledProcess(ProcessControlBlock *head[], INT32 process_id, INT32 num_processes);
+
 
 
 Message					*CreateMessage(INT32 msg_id, INT32 target_id, INT32 source_id, INT32 send_length, INT32 actual_msg_length, char *msg_buffer, BOOL is_broadcast);

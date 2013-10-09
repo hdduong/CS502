@@ -405,6 +405,7 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 		    *(INT32 *)SystemCallData->Argument[1] = process_error_arg;                                      // resume with process_id provided
 
 			break;
+
 		// change priority
 		case SYSNUM_CHANGE_PRIORITY:																		//The result of a change priority takes effect immediately
 			priority_process_id_arg = (INT32) SystemCallData->Argument[0];
@@ -417,6 +418,7 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 			 *(INT32 *)SystemCallData->Argument[2] = process_error_arg;
 
 			break;
+
 		// change priority
 		case SYSNUM_SEND_MESSAGE:	
 			send_target_pid_arg = (INT32) SystemCallData->Argument[0];
@@ -571,9 +573,9 @@ void    osInit( int argc, char *argv[]  ) {
 
 	//CALL ( os_create_process("test1j",(void*) test1j,test_case_prioirty, &created_process_id, &created_process_error) );
 
-	CALL ( os_create_process("test1k",(void*) test1k,test_case_prioirty, &created_process_id, &created_process_error) );
+	//CALL ( os_create_process("test1k",(void*) test1k,test_case_prioirty, &created_process_id, &created_process_error) );
 
-	//CALL ( os_create_process("test1l",(void*) test1l,test_case_prioirty, &created_process_id, &created_process_error) );
+	CALL ( os_create_process("test1l",(void*) test1l,test_case_prioirty, &created_process_id, &created_process_error) );
 }                                               // End of osInit
 
 
@@ -604,7 +606,7 @@ void	os_create_process(char* process_name, void	*starting_address, INT32 priorit
 
 	number_of_processes_created++;
 	
-	newPCB->wakeup_time = 0;															  // add more field for newPCB if successfully created
+	newPCB->wakeup_time = 0;																// add more field for newPCB if successfully created
 	newPCB->state = PROCESS_STATE_CREATE;
 
 	*process_id = global_process_id;														// prepare for return values
@@ -614,7 +616,7 @@ void	os_create_process(char* process_name, void	*starting_address, INT32 priorit
 
 	CALL( process_printer("Create",-1,-1,newPCB->process_id,CREATE_AFTER) );
 
-	CALL(make_ready_to_run(&ReadyQueueHead,newPCB) );												// whenever new process created, put into ready queue
+	CALL(make_ready_to_run(&ReadyQueueHead,newPCB) );										// whenever new process created, put into ready queue
 
 }
 
@@ -1073,7 +1075,7 @@ void suspend_process_id(INT32  process_id, INT32 *process_error_return)
 	INT32						Time;
 	ProcessControlBlock			*prev_timer_head;
 	BOOL						in_msg_suspend_queue;
-																			// if from send_receive then always ok		
+																										// if from send_receive then always ok		
 	if ( (legal_suspend_process = check_legal_process_suspend(process_id)) != PROCESS_SUSPEND_LEGAL) {	// not a legal process  
 		*process_error_return  =  legal_suspend_process;
 		return;
@@ -1202,7 +1204,6 @@ void resume_process_id(INT32  process_id, INT32 *process_error_return)
 		*process_error_return  =  legal_resume_process;
 		return;
 	}
-
 	
 	tmp = ReadyQueueHead;
 	CALL(LockSuspend(&suspend_list_result));
@@ -1282,7 +1283,7 @@ INT32 message_send_legal(INT32 target_process_id, INT32 send_length)
 {
 	INT32		ret_value = -1;
 
-	if  (target_process_id == -1)  {									// a success broadcast message
+	if  (target_process_id == -1)  {																				// a success broadcast message
 		if (send_length <= LEGAL_MESSAGE_LENGTH)
 			ret_value = PROCESS_SEND_SUCCESS;
 		else 
@@ -1386,17 +1387,16 @@ void send_message(INT32 target_pid, char *message, INT32 send_length, INT32 *pro
 				PCB_Current_Running_Process->process_id,send_length,strlen(Message_Table[index]->msg_buffer),Message_Table[index]->msg_buffer, FALSE);
 		}
 
-		Message_Table[number_of_message_created] = msg;															// Message_Table starts at 0
+		Message_Table[number_of_message_created] = msg;																	// Message_Table starts at 0
 		number_of_message_created++;
 
 		AddToSentBox(PCB_Table,PCB_Current_Running_Process->process_id,msg,number_of_processes_created);	
 
 		if ( IsExistsProcessIDList(MessageSuspendListHead,target_pid) ) {												//------------//
 			
-			//RESUME_PROCESS(target_pid, &error_ret);															    // if target process is in Suspend then resume it first then Suspend self
 			message_resume_process_id(target_pid);
 			
-			//SUSPEND_PROCESS(-1,&error_ret);																	// whenever I call this, return error at *(INT32 *)SystemCallData->Argument[1] = process_error_arg of Suspend Process
+			//SUSPEND_PROCESS(-1,&error_ret);																			// whenever I call this, return error at *(INT32 *)SystemCallData->Argument[1] = process_error_arg of Suspend Process
 			message_suspend_process_id(PCB_Current_Running_Process->process_id);
 		}
 
@@ -1438,14 +1438,8 @@ INT32 message_receive_legal(INT32 source_pid, char* msg, INT32 receive_length)
 			if (strlen(Message_Table[index]->msg_buffer) > receive_length )									// but if message length is not okie	
 				return PROCESS_RECEIVE_ILLEGAL_MSG_LENGTH;													// I cannot receive it
 			else {																							// else put it in my inbox if not inbox yet
-				/*if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
-					Message_Table[index]->msg_id) ) {*/
-						/*AddToInbox(PCB_Table,Message_Table[index]->target_id,Message_Table[index],number_of_processes_created); */
-						
-						strcpy(msg,Message_Table[index]->msg_buffer);
-						
-						ret_value = PROCESS_RECEIVE_SUCCESS;
-				//}
+				strcpy(msg,Message_Table[index]->msg_buffer);
+				ret_value = PROCESS_RECEIVE_SUCCESS;
 			}
 	}
 	
@@ -1495,33 +1489,24 @@ void receive_message(INT32 source_pid, char *message, INT32 receive_length, INT3
 			}
 			message_suspend_process_id(PCB_Current_Running_Process->process_id);									// NOT receive anything so suspend for waiting 
 		}																											//suspend self already include dispatcher
-																							
-			
-	
 
 		//--------------------------------------//																							
 		// return where suspend. Index cleared  //
 		//--------------------------------------//
 
-			index = IsMyMessageInArray(Message_Table,
-			PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue,number_of_message_created);
+		index = IsMyMessageInArray(Message_Table,
+		PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue,number_of_message_created);
 
-			if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
-					Message_Table[index]->msg_id) ) {
+		if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
+				Message_Table[index]->msg_id) ) {
 				
-				CALL( AddToInbox(PCB_Table,PCB_Current_Running_Process->process_id, Message_Table[index],number_of_processes_created) );
-			}
-			//AddToInbox(PCB_Table,Message_Table[index]->target_id,Message_Table[index],number_of_processes_created);
-						
-			strcpy(message,Message_Table[index]->msg_buffer);
-
-
-			actual_send_length = strlen(Message_Table[index]->msg_buffer);
-			actual_send_pid = Message_Table[index]->source_id;
-			strcpy(message,Message_Table[index]->msg_buffer);
-			receive_send_length =  Message_Table[index]->send_length;
-			
-
+			CALL( AddToInbox(PCB_Table,PCB_Current_Running_Process->process_id, Message_Table[index],number_of_processes_created) );
+		}
+									
+		actual_send_length = strlen(Message_Table[index]->msg_buffer);
+		actual_send_pid = Message_Table[index]->source_id;
+		strcpy(message,Message_Table[index]->msg_buffer);
+		receive_send_length =  Message_Table[index]->send_length;
 	}
 	else if (source_pid == PCB_Current_Running_Process->process_id) {
 
@@ -1533,25 +1518,19 @@ void receive_message(INT32 source_pid, char *message, INT32 receive_length, INT3
 		// return where suspend. Index cleared  //
 		//--------------------------------------//
 
-			index = IsMyMessageInArray(Message_Table,
-			PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue,number_of_message_created);
+		index = IsMyMessageInArray(Message_Table,
+		PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue,number_of_message_created);
 
-			if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
-					Message_Table[index]->msg_id) ) {
+		if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
+				Message_Table[index]->msg_id) ) {
 				
-				CALL( AddToInbox(PCB_Table,PCB_Current_Running_Process->process_id, Message_Table[index],number_of_processes_created) );
-			}
-			//AddToInbox(PCB_Table,Message_Table[index]->target_id,Message_Table[index],number_of_processes_created);
-						
-			strcpy(message,Message_Table[index]->msg_buffer);
+			CALL( AddToInbox(PCB_Table,PCB_Current_Running_Process->process_id, Message_Table[index],number_of_processes_created) );
+		}
 
-
-			actual_send_length = strlen(Message_Table[index]->msg_buffer);
-			actual_send_pid = Message_Table[index]->source_id;
-			strcpy(message,Message_Table[index]->msg_buffer);
-			receive_send_length =  Message_Table[index]->send_length;
-
-
+		actual_send_length = strlen(Message_Table[index]->msg_buffer);
+		actual_send_pid = Message_Table[index]->source_id;
+		strcpy(message,Message_Table[index]->msg_buffer);
+		receive_send_length =  Message_Table[index]->send_length;
 	}
 	*process_error_return = PROCESS_RECEIVE_SUCCESS;
 	*send_pid = actual_send_pid;
@@ -1571,8 +1550,7 @@ void message_suspend_process_id(INT32  process_id)
 	INT32						Time;
 	ProcessControlBlock			*prev_timer_head;
 
-																			// if from send_receive then always ok		
-	CALL(process_printer("MsgSus",process_id,-1,-1,SUSPEND_BEFORE) );
+																									// if from send_receive message then always ok		
 
 	if (PCB_Current_Running_Process->process_id == process_id) {                                       // suspend self
 		//CALL(LockSuspend(&suspend_list_result));
@@ -1580,7 +1558,7 @@ void message_suspend_process_id(INT32  process_id)
 		AddToMsgSuspendList(&MessageSuspendListHead, PCB_Current_Running_Process);					  // there is nothing left to run	
 		//CALL(UnLockSuspend(&suspend_list_result));
 
-		CALL(process_printer("MsgSus",process_id,-1,-1,SUSPEND_AFTER) );
+		//CALL(process_printer("MsgSus",process_id,-1,-1,SUSPEND_AFTER) );
 		
 		CALL( dispatcher());																		  // let another process run				
 		
@@ -1601,15 +1579,9 @@ void message_suspend_process_id(INT32  process_id)
 					*new_update_time = TimerQueueHead->wakeup_time - Time;	
 					if (*new_update_time > 0) {														// if time is not pass
 						MEM_WRITE(Z502TimerStart, new_update_time);									// set timer based on new timer queue head
-						//debug
-						//printf("... Suspend... new_update_time: %d \n",*new_update_time);
-						//debug
 					}
 					else {																			// time already pass
 						MEM_WRITE(Z502TimerStart, &generate_interrupt_immediately);
-						//debug
-						//printf("... Suspend... Time Pass... IMMEDIATELY GEN: \n");
-						//debug
 					}
 	
 					free(new_update_time);
@@ -1630,9 +1602,7 @@ void message_suspend_process_id(INT32  process_id)
 			CALL(UnLockSuspend(&suspend_list_result))
 		}
 		CALL(UnLockReady(&ready_queue_result));
-
-		CALL(process_printer("MsgSus",process_id,-1,-1,SUSPEND_AFTER) );
-		
+		//CALL(process_printer("MsgSus",process_id,-1,-1,SUSPEND_AFTER) );
 	}
 
 }
@@ -1651,7 +1621,6 @@ void message_resume_process_id(INT32  process_id)
 	PCB_Transfer_MsgSuspend_To_Ready->state = PROCESS_STATE_READY;
 	
 	//CALL(UnLockSuspend(&suspend_list_result));
-	
 	CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_MsgSuspend_To_Ready) );
 	
 }
