@@ -983,6 +983,7 @@ If both (1) and (2) satisfy then compare the index to get the lastest between tw
 Return index if a process can find a message it would want to receive. 
 Return -1 if a no process sends a message to current process. 
 *************************************************************************************************************************************************/
+
 INT32	IsNewSendMsgInArray(Message *head[], INT32 target_pid,  INT32 source_pid, Message *inbox, INT32 num_messages) {
 	INT32	countOnly = num_messages - 1;
 	BOOL	runAssignOnly = FALSE;

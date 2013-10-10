@@ -79,15 +79,15 @@ ProcessControlBlock			*PCB_Transfer_Timer_To_Suspend;											// used to trans
 ProcessControlBlock			*PCB_Transfer_Suspend_To_Ready;											// used to transfer PCB in resume
 ProcessControlBlock			*PCB_Change_Priority;													// used for change priority in ReadyQueue
 
-ProcessControlBlock			*PCB_Transfer_Timer_To_MsgSuspend;											// used for change send and receive messsage
-ProcessControlBlock			*PCB_Transfer_Ready_To_MsgSuspend;											// used for change send and receive messsage
-ProcessControlBlock			*PCB_Transfer_MsgSuspend_To_Timer;											// used for change send and receive messsage
-ProcessControlBlock			*PCB_Transfer_MsgSuspend_To_Ready;											// used for change send and receive messsage
+ProcessControlBlock			*PCB_Transfer_Timer_To_MsgSuspend;										// used in suspend/resume becuase of send and receive messsage
+ProcessControlBlock			*PCB_Transfer_Ready_To_MsgSuspend;										// used in suspend/resume becuase of send and receive messsage
+ProcessControlBlock			*PCB_Transfer_MsgSuspend_To_Timer;										// used in suspend/resume becuase of send and receive messsage
+ProcessControlBlock			*PCB_Transfer_MsgSuspend_To_Ready;										// used in suspend/resume becuase of send and receive messsage
 ProcessControlBlock			*PCB_Transfer_MsgSuspend_To_Suspend;		
 
 
-ProcessControlBlock			*PCB_Current_Running_Process;											// keep point to currrent running process, set when SwitchContext, Dispatcher
-																									// used as ProcessControlBlock			*PCB_Transfer_Ready_To_Timer;											// used to transfer PCB in start_timer
+ProcessControlBlock			*PCB_Current_Running_Process = NULL;									// keep point to currrent running process, set when SwitchContext, Dispatcher
+																									
 ProcessControlBlock			*PCB_Terminating_Processs;												// keep current context then destroy in next context
 
 ProcessControlBlock			*PCB_Table[MAX_PROCESSES];												// Move PCB Table to array.  //ProcessControlBlock			*ListHead;				// PCB table
@@ -107,8 +107,8 @@ void	please_charge_hardware_time() {};															// increase time function, 
 void	process_printer(char* action, INT32 target_process_id,										// -1 means does not print out in state printer
 						INT32 terminated_process_id, INT32 new_process_id, INT32 where_to_print);
 
-void	message_suspend_process_id(INT32  process_id);							// suspend specified a process with process_id. Allow suspend self
-void	message_resume_process_id(INT32  process_id);							// resume specified a process with process_id
+void	message_suspend_process_id(INT32  process_id);												// suspend specified a process with process_id. Allow suspend self
+void	message_resume_process_id(INT32  process_id);												// resume specified a process with process_id. Use to suspend message 
 
 void	send_message(INT32 target_pid, char *message, INT32 send_length, INT32 *process_error_return);
 void	receive_message(INT32 source_pid, char *message, INT32 receive_length, INT32 *send_length, INT32 *send_pid, INT32 *process_error_return);
@@ -161,7 +161,7 @@ void    interrupt_handler( void ) {
 
 		MEM_READ(Z502ClockStatus, &Time);													// read current time and compare to front of Timer queue
 		
-		LockTimer(&timer_queue_result);
+		CALL(LockTimer(&timer_queue_result) );
 		
 		CALL(process_printer("Ready",-1,-1,-1,INTERRUPT_BEFORE) );
 
@@ -203,7 +203,7 @@ void    interrupt_handler( void ) {
 			free(new_update_time);
 		}
 
-		UnLockTimer(&timer_queue_result);									// should have lock here otherwise something come in before update start_timer
+		CALL( UnLockTimer(&timer_queue_result) );									// should have lock here otherwise something come in before update start_timer
 	}
 	
 	// Clear out this device - we're done with it
@@ -405,7 +405,6 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 		    *(INT32 *)SystemCallData->Argument[1] = process_error_arg;                                      // resume with process_id provided
 
 			break;
-
 		// change priority
 		case SYSNUM_CHANGE_PRIORITY:																		//The result of a change priority takes effect immediately
 			priority_process_id_arg = (INT32) SystemCallData->Argument[0];
@@ -418,7 +417,6 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 			 *(INT32 *)SystemCallData->Argument[2] = process_error_arg;
 
 			break;
-
 		// change priority
 		case SYSNUM_SEND_MESSAGE:	
 			send_target_pid_arg = (INT32) SystemCallData->Argument[0];
@@ -546,15 +544,10 @@ void    osInit( int argc, char *argv[]  ) {
 	//				Run test manuallly			    			//
 	//----------------------------------------------------------//
 
-	//CALL(os_create_process("test0",(void*) test0,test_case_prioirty, &created_process_id, &created_process_error));
-	//Z502MakeContext( &next_context, (void*) test0, USER_MODE );	
-	//Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
-
-	//CALL( os_create_process("test1a",(void*) test1a,test_case_prioirty, &created_process_id, &created_process_error) );
-	//Z502MakeContext( &next_context, (void*) test1a, USER_MODE );	
-	//Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
-
+	//CALL ( os_create_process("test0",(void*) test0,test_case_prioirty, &created_process_id, &created_process_error) );
 	
+	//CALL ( os_create_process("test1a",(void*) test1a,test_case_prioirty, &created_process_id, &created_process_error) );
+
 	//CALL ( os_create_process("test1b",(void*) test1b,test_case_prioirty, &created_process_id, &created_process_error) );
 
 	//CALL ( os_create_process("test1c",(void*) test1c,test_case_prioirty, &created_process_id, &created_process_error) );
@@ -577,6 +570,17 @@ void    osInit( int argc, char *argv[]  ) {
 
 	CALL ( os_create_process("test1l",(void*) test1l,test_case_prioirty, &created_process_id, &created_process_error) );
 }                                               // End of osInit
+
+
+/*******************************************************************************************************************************
+os_create_process
+
+This function invoked by CREATE_PROCESS system call. 
+First of all, this function check process going to be created is a legalprocess or not. 
+If a legal process then new Process Control Block (PCB) created. Then it makes context for new process. Finally put the PCB to 
+ReadyQueue by invoking make_ready_to_run. 
+If not a legal process then return error through error variable. 
+********************************************************************************************************************************/
 
 
 void	os_create_process(char* process_name, void	*starting_address, INT32 priority, INT32 *process_id, INT32 *error)
@@ -606,7 +610,7 @@ void	os_create_process(char* process_name, void	*starting_address, INT32 priorit
 
 	number_of_processes_created++;
 	
-	newPCB->wakeup_time = 0;																// add more field for newPCB if successfully created
+	newPCB->wakeup_time = 0;															  // add more field for newPCB if successfully created
 	newPCB->state = PROCESS_STATE_CREATE;
 
 	*process_id = global_process_id;														// prepare for return values
@@ -616,12 +620,22 @@ void	os_create_process(char* process_name, void	*starting_address, INT32 priorit
 
 	CALL( process_printer("Create",-1,-1,newPCB->process_id,CREATE_AFTER) );
 
-	CALL(make_ready_to_run(&ReadyQueueHead,newPCB) );										// whenever new process created, put into ready queue
+	CALL(make_ready_to_run(&ReadyQueueHead,newPCB) );												// whenever new process created, put into ready queue
 
 }
 
 
 
+
+/*******************************************************************************************************************************
+check_legal_process
+
+This function uses to validate a process is legal or not. 
+A legal process when all following conditions are valid:
+	* Priority 
+	* Process Name
+	* Number of processes created.
+********************************************************************************************************************************/
 
 INT32	check_legal_process(char* process_name, INT32 initial_priority) 
 {
@@ -638,12 +652,29 @@ INT32	check_legal_process(char* process_name, INT32 initial_priority)
 }
 
 
+
+
+/*******************************************************************************************************************************
+start_timer
+
+This function invoked by system call SLEEP. First of all, this function will caculate Absolute Time of current running process.
+The input of SetTimer = (Absolute Time - Current Time) is the time expected in the furture a interrupt occours.
+Then this function will push current running process into TimerQueue. The insertion might cause change in order of PCB in 
+TimerQueue. There are some cases needed to considered before SetTimer:
+(I) If new PCB is inserted in front of TimerQueue then update Timer. This need to be check with two cases:
+	(1) If current time does not pass the Absolute Time of new PCB, then SetTimer = newHeaderTime - oldHeaderTime;
+	(2) If current time is already passed, then SetTimer = 1 to generate interrupt immediately. 
+(II) If new PCB is inserted in the middle or the end of the TimerQueue so do not need to update SetTimer.
+Finally, after all above processing finishes, dispatcher is invoked to let another process in ReadyQueu to run.
+Notice: In PCB, wakeup_time is the absolute Time expects interrupt occurs in furture.
+********************************************************************************************************************************/
+
 void start_timer(long *sleepTime) 
 {
 	INT32		Time;														// get current time assigned to 
 	INT32		*new_update_time = NULL;									// for Relative time from new head after put into Ready queue
 	BOOL		loop_wait_ReadyQueue_filled = TRUE;
-	ProcessControlBlock *prev_Head;						// to get timer of HeadTimerQueue. Needed for updatding Timer when changes in header
+	ProcessControlBlock *prev_Head;											// to get timer of HeadTimerQueue. Needed for updatding Timer when changes in header
 
 	MEM_READ (Z502ClockStatus, &Time);								        // get current time
 	
@@ -693,6 +724,16 @@ void start_timer(long *sleepTime)
 
 }
 
+
+
+/***************************************************************************************************
+make_ready_to_run
+
+This function decides a PCB is added into ReadyQueue ordered by Priority or Not. 
+And this is the place lets main test processes to run immediately by calling dispatcher. 
+Other children processes are added to ReadyQueue only.
+****************************************************************************************************/
+
 void make_ready_to_run(ProcessControlBlock **head_of_ready, ProcessControlBlock *pcb) 
 {
 	
@@ -707,7 +748,17 @@ void make_ready_to_run(ProcessControlBlock **head_of_ready, ProcessControlBlock 
 
 	if (already_run_main_test == FALSE) {
 		already_run_main_test= TRUE;
-		if ( strcmp(pcb->process_name, "test1b") == 0 ) {
+		
+		if ( strcmp(pcb->process_name, "test0") == 0 ) {
+			use_priority_queue = FALSE;
+			CALL( dispatcher() );
+		}
+		else if ( strcmp(pcb->process_name, "test1a") == 0 ) {
+			use_priority_queue = FALSE;
+			CALL( dispatcher() );
+		}
+		else if ( strcmp(pcb->process_name, "test1b") == 0 ) {
+			use_priority_queue = FALSE;
 			CALL( dispatcher() );
 		}
 		else if ( strcmp(pcb->process_name, "test1c") == 0 ) {
@@ -754,6 +805,26 @@ void make_ready_to_run(ProcessControlBlock **head_of_ready, ProcessControlBlock 
 
 }
 
+
+
+/**********************************************************************************************************************
+terminate_proccess_id
+
+This function is invoked by TERMINATE_PROCESS system call. 
+First it checks there is a legal process passed into the function.
+Then it checks each TimerQueue or ReadyQueue. If the process needed to be terminated is in 
+(I) ReadyQueue: then just take out from the ReadyQueue.
+(II) TimerQueue: take out from the TimerQueue with comparision between time at front of TimerQueue and current time. 
+There are two cases to be considered:
+	(1) If current time does not pass wake up time of PCB at front of TimerQueue then update SetTimer
+		by different between those time. This update happens even head PCB of TimerQueue is changed or not.
+		If change order happens at header TimerQueue then update SetTimer is needed. But even header does not change, 
+		I still update time in SetTimer because interrupt time is still correct but I can reduce the code. 
+	(2) If current time already passed, then generate interrupt immediately.
+Finally, set Terminate state in PCB_Table so that this process never be scheduled again.
+Notice: I think I should check with SuspendList but this function works with all the tests so I deciede not to code that.
+*************************************************************************************************************************/
+
 void terminate_proccess_id(INT32 process_id, INT32* error_return) 
 {
 	INT32	Time;
@@ -786,7 +857,7 @@ void terminate_proccess_id(INT32 process_id, INT32* error_return)
 				MEM_WRITE( Z502TimerStart, new_start_timer );
 			}
 			else {																		   // while removing old head maybe time already pass	
-				MEM_WRITE( Z502TimerStart, &generate_interrupt_immediately );							   // generate new interrupt	
+				MEM_WRITE( Z502TimerStart, &generate_interrupt_immediately );			   // generate new interrupt	
 			}
 			free(new_start_timer);
 			
@@ -805,6 +876,18 @@ void terminate_proccess_id(INT32 process_id, INT32* error_return)
 }
 
 
+
+/********************************************************************************************************************
+dispatcher
+
+The main function is let a process from front of ReadyQueue to run by calling SwitchContext. 
+Howerver, before leting a process to run, it need to check if any PCB is queued in ReadyQueue. There are some cases:
+(1) It waits for a process go into ReadyQueue if there is some processes in TimerQueue.
+(2)	It stops simulation if current running process is NULL and there is nothing in TimerQueue and ReadQueue. 
+	This means all processes are all in Suspend states or Killed. 
+	There is no processes to run in furture so stop simulation.
+**********************************************************************************************************************/
+
 void dispatcher() {
 	
 	INT32			   Time;
@@ -822,7 +905,15 @@ void dispatcher() {
 		if ( (IsQueueEmpty(TimerQueueHead)) &&
 			(! IsListEmpty (SuspendListHead)) && 
 			(PCB_Current_Running_Process == NULL) ) {
-				printf("Test1e: Self-Terminate Allowed. I Myself test1e Suspends Myself. No One wakes me up then the Program Halts... \n");
+				CALL( printf("Test1e: Self-Suspend Allowed. I Myself test1e Suspends Myself. No One wakes me up then the Program Halts... \n") );
+				CALL(Z502Halt());
+		}
+		//-----------------------------------------------//
+		//			bug fix: test0, test1a				 //
+		//-----------------------------------------------//
+		if ( (IsQueueEmpty(TimerQueueHead) ) &&
+			(IsQueueEmpty(ReadyQueueHead) ) &&
+			(PCB_Current_Running_Process == NULL) ) {
 				CALL(Z502Halt());
 		}
 		CALL();
@@ -845,7 +936,15 @@ void dispatcher() {
 
 }
 
-void	process_printer(char* action, INT32 target_process_id,				// -1 means does not print out in state printer
+
+
+/********************************************************************************************************************
+process_printer
+
+Print all the states of processes using State_Printer. 
+Input parameter = -1 means does not print out in state printer.
+**********************************************************************************************************************/
+void	process_printer(char* action, INT32 target_process_id,				
 						INT32 terminated_process_id, INT32 new_process_id, INT32 where_to_print) 
 {
 	INT32					Time;
@@ -988,6 +1087,9 @@ void	process_printer(char* action, INT32 target_process_id,				// -1 means does 
 	CALL( UnLockPrinter(&printer_lock_result) );
 }
 
+
+
+
 void LockTimer (INT32 *timer_lock_result){	
 	READ_MODIFY( MEMORY_INTERLOCK_BASE + PROCESS_TIMER_LOCK, DO_LOCK, SUSPEND_UNTIL_LOCKED, timer_lock_result );
 }
@@ -1035,6 +1137,17 @@ void	UnLockSuspendListMessage (INT32 *message_suspend_list_result) {
 	READ_MODIFY( MEMORY_INTERLOCK_BASE + MSG_SUSPEND_LOCK, DO_UNLOCK, SUSPEND_UNTIL_LOCKED, message_suspend_list_result );
 }
 
+
+
+/*******************************************************************************************************************************
+check_legal_process_suspend
+
+This function uses to validate a process is legal for suspending or not. 
+A legal process when all following conditions are valid:
+	* Process ID
+	* Suspend already suspend process
+********************************************************************************************************************************/
+
 INT32	check_legal_process_suspend(INT32 process_id) 
 {
 	if (!IsExistsProcessIDArray(PCB_Table, process_id, number_of_processes_created) )					// if this suspend process_id is not even in table
@@ -1066,6 +1179,20 @@ INT32	check_legal_process_suspend(INT32 process_id)
 
 }
 
+
+
+
+/*************************************************************************************************************************************
+suspend_process_id
+
+This function invoked by SUSPEND_PROCESS system call. It allows suspend self. 
+If a process to be suspended is current running process then just push it into Suspend List then let other processes in ReadyQueue to run
+If a process to be suspended is in TimerQueue,ReadyQueue or Suspend List:
+	First, Pull out this process out of Queue or List.
+	If pull out process from TimerQueue just need to update appropirate SetTimer.
+	Then call dispatcher to let other processes in ReadyQueue to run.
+*************************************************************************************************************************************/
+
 void suspend_process_id(INT32  process_id, INT32 *process_error_return)
 {
 	INT32						legal_suspend_process; 
@@ -1075,7 +1202,7 @@ void suspend_process_id(INT32  process_id, INT32 *process_error_return)
 	INT32						Time;
 	ProcessControlBlock			*prev_timer_head;
 	BOOL						in_msg_suspend_queue;
-																										// if from send_receive then always ok		
+																			// if from send_receive then always ok		
 	if ( (legal_suspend_process = check_legal_process_suspend(process_id)) != PROCESS_SUSPEND_LEGAL) {	// not a legal process  
 		*process_error_return  =  legal_suspend_process;
 		return;
@@ -1145,7 +1272,7 @@ void suspend_process_id(INT32  process_id, INT32 *process_error_return)
 		//					also check msg suspend list							//
 		//----------------------------------------------------------------------//
 		
-		CALL(LockReady(&ready_queue_result));
+		CALL(LockSuspendListMessage(&message_suspend_list_result));
 		in_msg_suspend_queue = IsExistsProcessIDList(MessageSuspendListHead,process_id);
 		if ( in_msg_suspend_queue ) {	
 			PCB_Transfer_MsgSuspend_To_Suspend = PullFromSuspendList(&MessageSuspendListHead,process_id); 
@@ -1155,20 +1282,27 @@ void suspend_process_id(INT32  process_id, INT32 *process_error_return)
 			AddToSuspendList(&SuspendListHead, PCB_Transfer_MsgSuspend_To_Suspend);
 			CALL(UnLockSuspend(&suspend_list_result))
 		}
-		CALL(UnLockReady(&ready_queue_result));
-
-		
-
+		CALL(LockSuspendListMessage(&message_suspend_list_result));
 
 		CALL(process_printer("Suspend",process_id,-1,-1,SUSPEND_AFTER) );
 		
 	}
 
-	
-
 	*process_error_return = PROCESS_SUSPEND_LEGAL;
 
 }
+
+
+
+/*******************************************************************************************************************************
+check_legal_process_resume
+
+This function uses to validate a process is legal for resuming or not. 
+A legal process when all following conditions are valid:
+	* Process ID
+	* Resume a process already suspend.
+	* Not resume an already resumed process.
+********************************************************************************************************************************/
 
 INT32	check_legal_process_resume(INT32 process_id) 
 {
@@ -1195,6 +1329,13 @@ INT32	check_legal_process_resume(INT32 process_id)
 }
 
 
+/*************************************************************************************************************************************
+resume_process_id
+
+This function invoked by RESUME_PROCESS system call.
+The process to be resumed taken out from Suspend List and put in ReadyQueue by calling make_ready_to_run.
+*************************************************************************************************************************************/
+
 void resume_process_id(INT32  process_id, INT32 *process_error_return)
 {
 	INT32					legal_resume_process; 
@@ -1204,6 +1345,7 @@ void resume_process_id(INT32  process_id, INT32 *process_error_return)
 		*process_error_return  =  legal_resume_process;
 		return;
 	}
+
 	
 	tmp = ReadyQueueHead;
 	CALL(LockSuspend(&suspend_list_result));
@@ -1218,6 +1360,18 @@ void resume_process_id(INT32  process_id, INT32 *process_error_return)
 	*process_error_return =  PROCESS_RESUME_LEGAL;
 }
 
+
+
+
+/*******************************************************************************************************************************
+check_legal_change_process_priority
+
+This function uses to validate a process is legal for changing priority or not. 
+Need to be consider:
+	* Valid process_id.
+	* Priority in rage.
+********************************************************************************************************************************/
+
 INT32	check_legal_change_process_priority(INT32 process_id, INT32 new_priority)  {
 	
 	if (!IsExistsProcessIDArray(PCB_Table, process_id, number_of_processes_created) )					// if this priority process_id is not even in table
@@ -1229,6 +1383,16 @@ INT32	check_legal_change_process_priority(INT32 process_id, INT32 new_priority) 
 
 	return PRIORITY_LEGAL;
 }
+
+
+
+/*******************************************************************************************************************************
+change_process_priority
+
+This function invoked by CHANGE_PRIORITY system call. It allows a process to  change its own priority.
+If current running process or a process in TimerQueue wants to change its priority just update itself.
+If a process from ReadyQueue then needs to pull it out from ReadyQueue, update its Priority and push back to ReadyQueue.
+********************************************************************************************************************************/
 
 void	change_process_priority(INT32 process_id, INT32 new_priority, INT32 *process_error_return) {
 	
@@ -1279,11 +1443,23 @@ void	change_process_priority(INT32 process_id, INT32 new_priority, INT32 *proces
 
 }
 
+
+
+/*****************************************************************************************************
+message_send_legal
+
+This function uses to validate a message going to be sent is legal or not. 
+Need to be consider:
+	* Length of buffer bigger than allowed.
+	* A legal process_id to be sent message to.
+	* Not over number of messages can be created in the system.
+*******************************************************************************************************/
+
 INT32 message_send_legal(INT32 target_process_id, INT32 send_length) 
 {
 	INT32		ret_value = -1;
 
-	if  (target_process_id == -1)  {																				// a success broadcast message
+	if  (target_process_id == -1)  {									// a success broadcast message
 		if (send_length <= LEGAL_MESSAGE_LENGTH)
 			ret_value = PROCESS_SEND_SUCCESS;
 		else 
@@ -1312,6 +1488,23 @@ INT32 message_send_legal(INT32 target_process_id, INT32 send_length)
 	return PROCESS_SEND_SUCCESS;
 
 }
+
+
+
+/********************************************************************************************************************************
+send_message
+
+This function is invoked by SEND_MESSAGE system call. 
+When a legal message going to sent, allocate memory for a message. Then push  a message into Global Message Queue.  
+A process sent a message then this message is kept in its SentBoxQueue. Some cases:
+(1) If a messsage is a broadcast message (target_pid == -1) then wakes up any message resides in Message Suspend List. This
+	allows message Ready to receive a message. 
+(2) If a process sent a message is sent to its self then just need to add message to its SentBoxQueue.
+(3) If send directly to specified process then make sure to send the lastest message in Global Message Queue. This happens
+	sometimes a process is suspended before sending a message. When it resumes, it might receives newer messages then it has 
+	to update its message to echo the lastest one. If a receiving process in Suspend Message List then sending process resumes
+	receiving process, that allows receiving process runs and ready to receive message.
+*********************************************************************************************************************************/
 
 void send_message(INT32 target_pid, char *message, INT32 send_length, INT32 *process_error_return) {
 
@@ -1387,16 +1580,17 @@ void send_message(INT32 target_pid, char *message, INT32 send_length, INT32 *pro
 				PCB_Current_Running_Process->process_id,send_length,strlen(Message_Table[index]->msg_buffer),Message_Table[index]->msg_buffer, FALSE);
 		}
 
-		Message_Table[number_of_message_created] = msg;																	// Message_Table starts at 0
+		Message_Table[number_of_message_created] = msg;															// Message_Table starts at 0
 		number_of_message_created++;
 
 		AddToSentBox(PCB_Table,PCB_Current_Running_Process->process_id,msg,number_of_processes_created);	
 
 		if ( IsExistsProcessIDList(MessageSuspendListHead,target_pid) ) {												//------------//
 			
+			//RESUME_PROCESS(target_pid, &error_ret);															    // if target process is in Suspend then resume it first then Suspend self
 			message_resume_process_id(target_pid);
 			
-			//SUSPEND_PROCESS(-1,&error_ret);																			// whenever I call this, return error at *(INT32 *)SystemCallData->Argument[1] = process_error_arg of Suspend Process
+			//SUSPEND_PROCESS(-1,&error_ret);																	// whenever I call this, return error at *(INT32 *)SystemCallData->Argument[1] = process_error_arg of Suspend Process
 			message_suspend_process_id(PCB_Current_Running_Process->process_id);
 		}
 
@@ -1407,6 +1601,15 @@ void send_message(INT32 target_pid, char *message, INT32 send_length, INT32 *pro
 }
 
 
+
+/*****************************************************************************************************
+message_receive_legal
+
+This function uses to validate a message going to be received is legal or not. 
+Need to be consider:
+	* Length of buffer bigger than allowed.
+	* Going to receive from invalid process_id.
+*******************************************************************************************************/
 
 INT32 message_receive_legal(INT32 source_pid, char* msg, INT32 receive_length) 
 {
@@ -1438,8 +1641,14 @@ INT32 message_receive_legal(INT32 source_pid, char* msg, INT32 receive_length)
 			if (strlen(Message_Table[index]->msg_buffer) > receive_length )									// but if message length is not okie	
 				return PROCESS_RECEIVE_ILLEGAL_MSG_LENGTH;													// I cannot receive it
 			else {																							// else put it in my inbox if not inbox yet
-				strcpy(msg,Message_Table[index]->msg_buffer);
-				ret_value = PROCESS_RECEIVE_SUCCESS;
+				/*if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
+					Message_Table[index]->msg_id) ) {*/
+						/*AddToInbox(PCB_Table,Message_Table[index]->target_id,Message_Table[index],number_of_processes_created); */
+						
+						strcpy(msg,Message_Table[index]->msg_buffer);
+						
+						ret_value = PROCESS_RECEIVE_SUCCESS;
+				//}
 			}
 	}
 	
@@ -1450,6 +1659,19 @@ INT32 message_receive_legal(INT32 source_pid, char* msg, INT32 receive_length)
 
 }
 
+
+/****************************************************************************************************************************************************
+receive_message
+
+This function is invoked by RECEIVE_MESSAGE system call. Some cases to be considered:
+(I)   If a receiving message is a broadcast message then check this message already received or not. 
+	  (1) If already received then no new message for this process. It suspends itself to let other processes to receive broadcast messsage.
+	  (2) If receiving message is a new one, then add to process's inbox 
+(II)  If a process receving message receive from itself then this case is as smaller case of (III)
+(III) If a receving message is sent from specifed process (A) then current running process (B) suspends itself to make sure source process (A) 
+	  can run and completes its send. The sending process (A) now can run, send a message to (B) with making a call to resume receiving process (A). 
+	  Finally, (A) resumes, add message to its inbox and then updates necessary output parameters.
+******************************************************************************************************************************************************/
 
 void receive_message(INT32 source_pid, char *message, INT32 receive_length, INT32 *send_length, INT32 *send_pid, INT32 *process_error_return) {
 
@@ -1489,24 +1711,30 @@ void receive_message(INT32 source_pid, char *message, INT32 receive_length, INT3
 			}
 			message_suspend_process_id(PCB_Current_Running_Process->process_id);									// NOT receive anything so suspend for waiting 
 		}																											//suspend self already include dispatcher
+																							
+			
+	
 
 		//--------------------------------------//																							
 		// return where suspend. Index cleared  //
 		//--------------------------------------//
 
-		index = IsMyMessageInArray(Message_Table,
-		PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue,number_of_message_created);
+			index = IsMyMessageInArray(Message_Table,
+			PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue,number_of_message_created);
 
-		if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
-				Message_Table[index]->msg_id) ) {
+			if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
+					Message_Table[index]->msg_id) ) {
 				
-			CALL( AddToInbox(PCB_Table,PCB_Current_Running_Process->process_id, Message_Table[index],number_of_processes_created) );
-		}
-									
-		actual_send_length = strlen(Message_Table[index]->msg_buffer);
-		actual_send_pid = Message_Table[index]->source_id;
-		strcpy(message,Message_Table[index]->msg_buffer);
-		receive_send_length =  Message_Table[index]->send_length;
+				CALL( AddToInbox(PCB_Table,PCB_Current_Running_Process->process_id, Message_Table[index],number_of_processes_created) );
+			}
+			//AddToInbox(PCB_Table,Message_Table[index]->target_id,Message_Table[index],number_of_processes_created);
+
+			actual_send_length = strlen(Message_Table[index]->msg_buffer);
+			actual_send_pid = Message_Table[index]->source_id;
+			strcpy(message,Message_Table[index]->msg_buffer);
+			receive_send_length =  Message_Table[index]->send_length;
+			
+
 	}
 	else if (source_pid == PCB_Current_Running_Process->process_id) {
 
@@ -1518,19 +1746,22 @@ void receive_message(INT32 source_pid, char *message, INT32 receive_length, INT3
 		// return where suspend. Index cleared  //
 		//--------------------------------------//
 
-		index = IsMyMessageInArray(Message_Table,
-		PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue,number_of_message_created);
+			index = IsMyMessageInArray(Message_Table,
+			PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue,number_of_message_created);
 
-		if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
-				Message_Table[index]->msg_id) ) {
+			if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
+					Message_Table[index]->msg_id) ) {
 				
-			CALL( AddToInbox(PCB_Table,PCB_Current_Running_Process->process_id, Message_Table[index],number_of_processes_created) );
-		}
+				CALL( AddToInbox(PCB_Table,PCB_Current_Running_Process->process_id, Message_Table[index],number_of_processes_created) );
+			}
+			//AddToInbox(PCB_Table,Message_Table[index]->target_id,Message_Table[index],number_of_processes_created);
+						
+			actual_send_length = strlen(Message_Table[index]->msg_buffer);
+			actual_send_pid = Message_Table[index]->source_id;
+			strcpy(message,Message_Table[index]->msg_buffer);
+			receive_send_length =  Message_Table[index]->send_length;
 
-		actual_send_length = strlen(Message_Table[index]->msg_buffer);
-		actual_send_pid = Message_Table[index]->source_id;
-		strcpy(message,Message_Table[index]->msg_buffer);
-		receive_send_length =  Message_Table[index]->send_length;
+
 	}
 	*process_error_return = PROCESS_RECEIVE_SUCCESS;
 	*send_pid = actual_send_pid;
@@ -1540,6 +1771,15 @@ void receive_message(INT32 source_pid, char *message, INT32 receive_length, INT3
 
 }
 
+/*****************************************************************************************************
+message_suspend_process_id
+
+The functionality of this process is simalar to suspend_process_id, except without output parameters. 
+This function is called in both send_message and receiving message to make sure a process sends a 
+right message or receives the message it expected.
+The processe is suspended to be push in Message Suspend List. This List is different from SuspendList,
+which is used in SUSPEND_PROCESS and RECEIVE_PROCESS.
+*******************************************************************************************************/
 
 void message_suspend_process_id(INT32  process_id)
 {
@@ -1550,7 +1790,8 @@ void message_suspend_process_id(INT32  process_id)
 	INT32						Time;
 	ProcessControlBlock			*prev_timer_head;
 
-																									// if from send_receive message then always ok		
+																			// if from send_receive then always ok		
+	CALL(process_printer("MsgSus",process_id,-1,-1,SUSPEND_BEFORE) );
 
 	if (PCB_Current_Running_Process->process_id == process_id) {                                       // suspend self
 		//CALL(LockSuspend(&suspend_list_result));
@@ -1558,7 +1799,7 @@ void message_suspend_process_id(INT32  process_id)
 		AddToMsgSuspendList(&MessageSuspendListHead, PCB_Current_Running_Process);					  // there is nothing left to run	
 		//CALL(UnLockSuspend(&suspend_list_result));
 
-		//CALL(process_printer("MsgSus",process_id,-1,-1,SUSPEND_AFTER) );
+		CALL(process_printer("MsgSus",process_id,-1,-1,SUSPEND_AFTER) );
 		
 		CALL( dispatcher());																		  // let another process run				
 		
@@ -1579,9 +1820,15 @@ void message_suspend_process_id(INT32  process_id)
 					*new_update_time = TimerQueueHead->wakeup_time - Time;	
 					if (*new_update_time > 0) {														// if time is not pass
 						MEM_WRITE(Z502TimerStart, new_update_time);									// set timer based on new timer queue head
+						//debug
+						//printf("... Suspend... new_update_time: %d \n",*new_update_time);
+						//debug
 					}
 					else {																			// time already pass
 						MEM_WRITE(Z502TimerStart, &generate_interrupt_immediately);
+						//debug
+						//printf("... Suspend... Time Pass... IMMEDIATELY GEN: \n");
+						//debug
 					}
 	
 					free(new_update_time);
@@ -1597,16 +1844,23 @@ void message_suspend_process_id(INT32  process_id)
 			PCB_Transfer_Ready_To_MsgSuspend = PullProcessFromQueue(&ReadyQueueHead,process_id); 
 			PCB_Transfer_Ready_To_MsgSuspend->state = PROCESS_STATE_SUSPEND;
 
-			CALL(LockSuspend(&suspend_list_result));
+			CALL(LockSuspendListMessage(&message_suspend_list_result));
 			AddToMsgSuspendList(&MessageSuspendListHead, PCB_Transfer_Ready_To_MsgSuspend);
-			CALL(UnLockSuspend(&suspend_list_result))
+			CALL(UnLockSuspendListMessage(&message_suspend_list_result))
 		}
 		CALL(UnLockReady(&ready_queue_result));
-		//CALL(process_printer("MsgSus",process_id,-1,-1,SUSPEND_AFTER) );
+
+		CALL(process_printer("MsgSus",process_id,-1,-1,SUSPEND_AFTER) );
+		
 	}
 
 }
 
+/*************************************************************************************************************************************
+message_resume_process_id
+
+The process to be resumed taken out from Suspend List and put in ReadyQueue by calling make_ready_to_run.
+*************************************************************************************************************************************/
 
 void message_resume_process_id(INT32  process_id)
 {
@@ -1621,6 +1875,7 @@ void message_resume_process_id(INT32  process_id)
 	PCB_Transfer_MsgSuspend_To_Ready->state = PROCESS_STATE_READY;
 	
 	//CALL(UnLockSuspend(&suspend_list_result));
+	
 	CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_MsgSuspend_To_Ready) );
 	
 }
