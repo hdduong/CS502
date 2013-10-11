@@ -7,7 +7,7 @@
 #include				"student_global.h"
 
 
-/************************************************************************************
+/********************************** hdduong **************************************************
 	This is the file implement queue, linkedlist coded by hdduong
 
 	Sep/08/13:		Created
@@ -15,7 +15,8 @@
 	Sep/29/13:		Version z502_v4: change PCB Table from List to Array
 	Oct/02/13:		Version z502_v5: Priority Queue
 	Oct/05/13:		Version z502_v6: update with MessageQueue for Send/Receive message
-**************************************************************************************/
+	Oct/10/13:		Version z502_v7: have to change broadcast so now only one can receive
+************************************* hdduong *************************************************/
 
 //------------------------------------------------------------------//
 //							QUEUE									//
@@ -753,6 +754,7 @@ Message	*CreateMessage(INT32 msg_id, INT32 target_id, INT32 source_id, INT32 sen
 	msg->actual_msg_length = actual_msg_length;
 	msg->is_broadcast = is_broadcast;
 	msg->nextMsg = NULL;
+	msg->message_state = MESSAGE_STATE_FREE;
 	return msg;
 
 }
@@ -806,7 +808,9 @@ void	AddToInbox(ProcessControlBlock *PCB_Table[], INT32 process_id, Message *msg
 		if ( PCB_Table[index] != NULL)  {
 			if (PCB_Table[index]->process_id == process_id ) {
 				if (!IsExistsMessageIDQueue(PCB_Table[index]->inboxQueue,msg->msg_id) ) {
+					msg->message_state = MESSAGE_STATE_RECEIVED;
 					add_message = CreateMessage(msg->msg_id,msg->target_id, msg->source_id, msg->send_length,msg->actual_msg_length,msg->msg_buffer,msg->is_broadcast);
+					add_message->message_state = MESSAGE_STATE_RECEIVED;
 					AddToMsgQueue(& (PCB_Table[index]->inboxQueue),add_message);
 				}
 			}
@@ -825,8 +829,8 @@ Add message to inbox or sentBox Queue. New message inserted at the end of Queue 
 
 void AddToMsgQueue(Message **head, Message *msg)
 {
-	Message *tmp;
-	Message *prev;
+	Message *tmp = NULL;
+	Message *prev = NULL;
 
 	if (IsMsgQueueEmpty(*head)) 
 	{
@@ -847,8 +851,10 @@ void AddToMsgQueue(Message **head, Message *msg)
 		prev = tmp;
 		tmp = tmp->nextMsg;
 	}
-	prev->nextMsg = msg;								// insert in the Middle & End
-	msg->nextMsg = NULL;								// reset linker
+	if (prev != NULL) {
+		prev->nextMsg = msg;								// insert in the Middle & End
+		msg->nextMsg = NULL;								// reset linker
+	}
 
 	if (tmp != NULL) {									// insert in the Middle
 		msg->nextMsg = tmp;
@@ -890,9 +896,11 @@ BOOL	IsExistsMessageIDQueue(Message *head, INT32 msg_id)
 		return FALSE;
 
 	while (tmp!= NULL) {
-		if (tmp->msg_id == msg_id)
-			return TRUE;
-
+		if ( (tmp->msg_id == msg_id) )
+			if (tmp->message_state != MESSAGE_STATE_FREE)
+				return TRUE;
+			else 
+				return FALSE;
 		tmp = tmp->nextMsg;
 	}
 
@@ -935,7 +943,8 @@ INT32	IsMyMessageInArray(Message *head[], INT32 process_id, Message *inbox, INT3
 					&& 
 					(head[count]->source_id != process_id) )
 				)
-			&& (! IsExistsMessageIDQueue(inbox,head[count]->msg_id)) ) {								// new message
+			&& (! IsExistsMessageIDQueue(inbox,head[count]->msg_id)) 
+			&& (head[count]->message_state != MESSAGE_STATE_RECEIVED ) ) {								// new message
 			//return count;	
 				if (head[count]->target_id == process_id) {
 					maxOnly = count;
@@ -1004,7 +1013,7 @@ INT32	IsNewSendMsgInArray(Message *head[], INT32 target_pid,  INT32 source_pid, 
 				(head[countOnly]->source_id == target_pid)												    // send directly to me
 				&&
 				(head[countOnly]->target_id == source_pid)
-			
+				&& (head[countOnly]->message_state = MESSAGE_STATE_FREE)
 				)) {								// new message
 					if (countOnly < (num_messages - 1) ) {// just send
 						runAssignOnly = FALSE;

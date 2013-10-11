@@ -564,11 +564,11 @@ void    osInit( int argc, char *argv[]  ) {
 
 	//CALL ( os_create_process("test1i",(void*) test1i,test_case_prioirty, &created_process_id, &created_process_error) );
 
-	CALL ( os_create_process("test1j",(void*) test1j,test_case_prioirty, &created_process_id, &created_process_error) );
+	//CALL ( os_create_process("test1j",(void*) test1j,test_case_prioirty, &created_process_id, &created_process_error) );
 
 	//CALL ( os_create_process("test1k",(void*) test1k,test_case_prioirty, &created_process_id, &created_process_error) );
 
-	//CALL ( os_create_process("test1l",(void*) test1l,test_case_prioirty, &created_process_id, &created_process_error) );
+	CALL ( os_create_process("test1l",(void*) test1l,test_case_prioirty, &created_process_id, &created_process_error) );
 }                                               // End of osInit
 
 
@@ -596,12 +596,12 @@ void	os_create_process(char* process_name, void	*starting_address, INT32 priorit
 		 return;
 	 }
 
-	 global_process_id++;																	 // if legal processs
+	global_process_id++;																	 // if legal processs
 	 newPCB = CreateProcessControlBlockWithData( (char*) process_name,						 // create new pcb
 												 (void*) starting_address,
 												 priority,
 												 global_process_id);
-	
+	 
 	if (newPCB == NULL) {																	// run out of resources
 		*error = PROCESS_CREATED_NOT_ENOUGH_MEMORY;
 		return;
@@ -1689,10 +1689,10 @@ void receive_message(INT32 source_pid, char *message, INT32 receive_length, INT3
 	}
 
 	if (source_pid == -1) {																			// receive from anyone
-		if ( ( index = IsMyMessageInArray(Message_Table,
+		while ( ( index = IsMyMessageInArray(Message_Table,
 		PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue, number_of_message_created) ) == -1) {				// no one sends me a NEW message
 			//SUSPEND_PROCESS(-1,&error_ret);														// suspend myself and I wait										
-			if (IsQueueEmpty(ReadyQueueHead) ) {
+			if ( (IsQueueEmpty(ReadyQueueHead)) && (IsQueueEmpty(TimerQueueHead)) ) {
 				if (IsListEmpty(SuspendListHead ) ) {												// Pull out from MessageSuspendList only when SuspenList is empty
 					while (!IsListEmpty(MessageSuspendListHead))									// otherwise fight each other in ready
 					{
@@ -1719,8 +1719,32 @@ void receive_message(INT32 source_pid, char *message, INT32 receive_length, INT3
 		// return where suspend. Index cleared  //
 		//--------------------------------------//
 
-			index = IsMyMessageInArray(Message_Table,
-			PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue,number_of_message_created);
+		//while ( ( index = IsMyMessageInArray(Message_Table,
+		//PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue, number_of_message_created) ) == -1) {				// no one sends me a NEW message
+		//	//SUSPEND_PROCESS(-1,&error_ret);														// suspend myself and I wait										
+		//	if (IsQueueEmpty(ReadyQueueHead) ) {
+		//		if (IsListEmpty(SuspendListHead ) ) {												// Pull out from MessageSuspendList only when SuspenList is empty
+		//			while (!IsListEmpty(MessageSuspendListHead))									// otherwise fight each other in ready
+		//			{
+		//				tmp = MessageSuspendListHead;
+		//				//CALL(LockSuspend(&suspend_list_result));
+	
+		//				PCB_Transfer_MsgSuspend_To_Ready=  PullFromSuspendList(&MessageSuspendListHead,tmp->process_id) ;	
+		//				PCB_Transfer_MsgSuspend_To_Ready->state = PROCESS_STATE_READY;
+	
+		//				//CALL(UnLockSuspend(&suspend_list_result));
+	
+		//				CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_MsgSuspend_To_Ready) );
+
+		//			}
+		//		}
+		//	}
+		//	message_suspend_process_id(PCB_Current_Running_Process->process_id);									// NOT receive anything so suspend for waiting 
+		//}								
+				//message_suspend_process_id(PCB_Current_Running_Process->process_id);
+				//index = IsMyMessageInArray(Message_Table,
+				//PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue,number_of_message_created);
+			//}
 
 			if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
 					Message_Table[index]->msg_id) ) {

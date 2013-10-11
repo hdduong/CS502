@@ -16,6 +16,8 @@ typedef struct StructMessage {
 	INT32				actual_msg_length;						// actual length of the message
 	char				msg_buffer[LEGAL_MESSAGE_LENGTH];		// data of the message
 	BOOL				is_broadcast;							// TRUE: a boardcast message. For future use
+	INT32				message_state;							// Record if message already receivedd by a process this message wont be taken into another process inbox 
+																// THIS IS FIX FOR broadcast that only one process can receive
 	struct				StructMessage		*nextMsg;			
 } Message;
 

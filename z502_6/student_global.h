@@ -89,4 +89,6 @@
 #define			MAX_MESSAGES							25L
 #define			MAX_MESSAGES_IN_QUEUE					15L
 
+#define			MESSAGE_STATE_FREE						1L
+#define			MESSAGE_STATE_RECEIVED					2L
 #endif
