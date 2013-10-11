@@ -232,7 +232,7 @@ void    fault_handler( void )
 	switch (device_id)
 	{
 	case PRIVILEGED_INSTRUCTION:
-		printf("\nExiting test1k Because of PRIVILEGED_INSTRUCTION...\n\n");
+		printf("\nExiting test1k Because of Violating PRIVILEGED_INSTRUCTION...\n\n");
 		CALL(Z502Halt());
 		break;
 	case INVALID_PHYSICAL_MEMORY:
