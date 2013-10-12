@@ -417,7 +417,7 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 			 *(INT32 *)SystemCallData->Argument[2] = process_error_arg;
 
 			break;
-		// change priority
+		// send message
 		case SYSNUM_SEND_MESSAGE:	
 			send_target_pid_arg = (INT32) SystemCallData->Argument[0];
 			
@@ -564,11 +564,11 @@ void    osInit( int argc, char *argv[]  ) {
 
 	//CALL ( os_create_process("test1i",(void*) test1i,test_case_prioirty, &created_process_id, &created_process_error) );
 
-	CALL ( os_create_process("test1j",(void*) test1j,test_case_prioirty, &created_process_id, &created_process_error) );
+	//CALL ( os_create_process("test1j",(void*) test1j,test_case_prioirty, &created_process_id, &created_process_error) );
 
 	//CALL ( os_create_process("test1k",(void*) test1k,test_case_prioirty, &created_process_id, &created_process_error) );
 
-	//CALL ( os_create_process("test1l",(void*) test1l,test_case_prioirty, &created_process_id, &created_process_error) );
+	CALL ( os_create_process("test1l",(void*) test1l,test_case_prioirty, &created_process_id, &created_process_error) );
 }                                               // End of osInit
 
 
@@ -1713,50 +1713,18 @@ void receive_message(INT32 source_pid, char *message, INT32 receive_length, INT3
 		}																											//suspend self already include dispatcher
 																							
 			
-	
 
-		//--------------------------------------//																							
-		// return where suspend. Index cleared  //
-		//--------------------------------------//
-
-		//while ( ( index = IsMyMessageInArray(Message_Table,
-		//PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue, number_of_message_created) ) == -1) {				// no one sends me a NEW message
-		//	//SUSPEND_PROCESS(-1,&error_ret);														// suspend myself and I wait										
-		//	if (IsQueueEmpty(ReadyQueueHead) ) {
-		//		if (IsListEmpty(SuspendListHead ) ) {												// Pull out from MessageSuspendList only when SuspenList is empty
-		//			while (!IsListEmpty(MessageSuspendListHead))									// otherwise fight each other in ready
-		//			{
-		//				tmp = MessageSuspendListHead;
-		//				//CALL(LockSuspend(&suspend_list_result));
-	
-		//				PCB_Transfer_MsgSuspend_To_Ready=  PullFromSuspendList(&MessageSuspendListHead,tmp->process_id) ;	
-		//				PCB_Transfer_MsgSuspend_To_Ready->state = PROCESS_STATE_READY;
-	
-		//				//CALL(UnLockSuspend(&suspend_list_result));
-	
-		//				CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_MsgSuspend_To_Ready) );
-
-		//			}
-		//		}
-		//	}
-		//	message_suspend_process_id(PCB_Current_Running_Process->process_id);									// NOT receive anything so suspend for waiting 
-		//}								
-				//message_suspend_process_id(PCB_Current_Running_Process->process_id);
-				//index = IsMyMessageInArray(Message_Table,
-				//PCB_Current_Running_Process->process_id,PCB_Current_Running_Process->inboxQueue,number_of_message_created);
-			//}
-
-			if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
-					Message_Table[index]->msg_id) ) {
+		if (!IsExistsMessageIDQueue(PCB_Current_Running_Process->inboxQueue,
+				Message_Table[index]->msg_id) ) {
 				
-				CALL( AddToInbox(PCB_Table,PCB_Current_Running_Process->process_id, Message_Table[index],number_of_processes_created) );
-			}
-			//AddToInbox(PCB_Table,Message_Table[index]->target_id,Message_Table[index],number_of_processes_created);
+			CALL( AddToInbox(PCB_Table,PCB_Current_Running_Process->process_id, Message_Table[index],number_of_processes_created) );
+		}
+		//AddToInbox(PCB_Table,Message_Table[index]->target_id,Message_Table[index],number_of_processes_created);
 
-			actual_send_length = strlen(Message_Table[index]->msg_buffer);
-			actual_send_pid = Message_Table[index]->source_id;
-			strcpy(message,Message_Table[index]->msg_buffer);
-			receive_send_length =  Message_Table[index]->send_length;
+		actual_send_length = strlen(Message_Table[index]->msg_buffer);
+		actual_send_pid = Message_Table[index]->source_id;
+		strcpy(message,Message_Table[index]->msg_buffer);
+		receive_send_length =  Message_Table[index]->send_length;
 			
 
 	}
