@@ -220,6 +220,7 @@ void    fault_handler( void )
     INT32       device_id;
     INT32       status;
     INT32       Index = 0;
+	INT32		error_ret = 0;
 
     // Get cause of interrupt
     MEM_READ(Z502InterruptDevice, &device_id );
@@ -233,7 +234,11 @@ void    fault_handler( void )
 	{
 	case PRIVILEGED_INSTRUCTION:
 		printf("\nExiting test1k Because of Violating PRIVILEGED_INSTRUCTION...\n\n");
+		
+		printf( "Fault_handler: Found vector type %d with value %d\n",
+                        device_id, status );
 		CALL(Z502Halt());
+
 		break;
 	case INVALID_PHYSICAL_MEMORY:
 		break;
@@ -822,6 +827,7 @@ There are two cases to be considered:
 		I still update time in SetTimer because interrupt time is still correct but I can reduce the code. 
 	(2) If current time already passed, then generate interrupt immediately.
 Finally, set Terminate state in PCB_Table so that this process never be scheduled again.
+After finishing this routine, program returns to SVC which invokes dispatcher() to let other processes run.
 Notice: I think I should check with SuspendList but this function works with all the tests so I deciede not to code that.
 *************************************************************************************************************************/
 
@@ -866,7 +872,7 @@ void terminate_proccess_id(INT32 process_id, INT32* error_return)
 
 		CALL( process_printer("Kill",-1,process_id,-1,TERMINATE_AFTER) );
 											
-		CALL( RemoveFromArray(PCB_Table,process_id,number_of_processes_created) );			// remove from PCB table
+		CALL( RemoveFromArray(PCB_Table,process_id,number_of_processes_created) );			// remove from PCB table by set state status = TERMINATE
 		
 		*error_return = ERR_SUCCESS;														//success
 
@@ -1498,12 +1504,11 @@ This function is invoked by SEND_MESSAGE system call.
 When a legal message going to sent, allocate memory for a message. Then push  a message into Global Message Queue.  
 A process sent a message then this message is kept in its SentBoxQueue. Some cases:
 (1) If a messsage is a broadcast message (target_pid == -1) then wakes up any message resides in Message Suspend List. This
-	allows message Ready to receive a message. 
-(2) If a process sent a message is sent to its self then just need to add message to its SentBoxQueue.
-(3) If send directly to specified process then make sure to send the lastest message in Global Message Queue. This happens
-	sometimes a process is suspended before sending a message. When it resumes, it might receives newer messages then it has 
-	to update its message to echo the lastest one. If a receiving process in Suspend Message List then sending process resumes
-	receiving process, that allows receiving process runs and ready to receive message.
+	allows process Ready to receive a message. 
+(2) If a process sent a message is to its self then just need to add message to its SentBoxQueue.
+(3) If send directly to specified process then make sure to send a message to Global Message Queue. The sender process also checks
+	that if receiver process is in SuspendListHead then resume the receiver. Receiver then goes to ReadyQueue and ready to receive
+	a message
 *********************************************************************************************************************************/
 
 void send_message(INT32 target_pid, char *message, INT32 send_length, INT32 *process_error_return) {
@@ -1664,11 +1669,13 @@ INT32 message_receive_legal(INT32 source_pid, char* msg, INT32 receive_length)
 receive_message
 
 This function is invoked by RECEIVE_MESSAGE system call. Some cases to be considered:
-(I)   If a receiving message is a broadcast message then check this message already received or not. 
-	  (1) If already received then no new message for this process. It suspends itself to let other processes to receive broadcast messsage.
-	  (2) If receiving message is a new one, then add to process's inbox 
-(II)  If a process receving message receive from itself then this case is as smaller case of (III)
-(III) If a receving message is sent from specifed process (A) then current running process (B) suspends itself to make sure source process (A) 
+(I)   If a receiving message is a broadcast message then check this message in global message list whether already received or not. 
+	  (1) If receiving message is not in current process's inbox (new one), then add this message to current process's inbox and marked in the 
+	  global message list as a received message (message state = MESSAGE_STATE_RECEIVED. Can find this code under IsMyMessageInArray function). 
+	  (2) If already received (message state = MESSAGE_STATE_RECEIVED) no new message for this process. It suspends itself to let other processes 
+	  to send something
+(II)  If a process receving message receives from itself then this case is as smaller case of (III)
+(III) If a receving message is sent from specified process (A) then current running process (B) suspends itself to make sure source process (A) 
 	  can run and completes its send. The sending process (A) now can run, send a message to (B) with making a call to resume receiving process (A). 
 	  Finally, (A) resumes, add message to its inbox and then updates necessary output parameters.
 ******************************************************************************************************************************************************/
