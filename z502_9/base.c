@@ -47,6 +47,10 @@ char                 *call_names[] = { "mem_read ", "mem_write",
 
 /**************************************************************** <hdduong **********************************************************************************/
 extern						INT16								Z502_MODE;
+extern						char								MEMORY[PHYS_MEM_PGS * PGSIZE ];     // physical memory value
+Disk						*WrittenData;															    // Record what was written
+//DiskMemory					*MemoryWrittenData;
+INT16						MAP_DISK_SECTOR[MAX_NUMBER_OF_DISKS][NUM_LOGICAL_SECTORS] = {0};
 INT32						global_process_id = 0;													// keep track of process_id  
 INT32						number_of_processes_created = 0;										// keep track of number processes created. It might need lock
 																									// = global_process_id but easier to read	
@@ -55,22 +59,29 @@ INT32						timer_queue_result;														// lock for timer queue
 INT32						suspend_list_result;													// lock for suspend list
 INT32						printer_lock_result;													// used for locking printing code
 INT32						priority_lock_result;													// used for locking priority changed code
+INT32						disk_queue_lock;														// used for disk lock
+INT32						disk_access_lock;
+
 INT32						message_lock_result;													// used for locking global message queue
 INT32						message_suspend_list_result;											// used for locking suspend list send/receive message
-
 INT32						generate_interrupt_immediately  = 1 ;									// use for generate interrupt when Timer passed the wake-up time
 
 BOOL						already_run_main_test = FALSE;
 BOOL						use_priority_queue = FALSE;												// use priority queue or not
+BOOL						interrupt_lock = FALSE;
+BOOL						disk_lock = FALSE;
 
 Message						*Message_Table[MAX_MESSAGES];											// use to store messages exchange between processes
 INT32						global_msg_id = 0;														// keep track of number of message in the system
 INT32						number_of_message_created;												// hom many messages is stored in each process and whole OS
+INT32						mark_fifo_page = 0;
+INT32						countShadowEntry = 0;
 
 ProcessControlBlock			*TimerQueueHead;														// TimerQueue 
 ProcessControlBlock			*ReadyQueueHead;														// ReadyQueue
 ProcessControlBlock			*SuspendListHead;														// SuspendList
 ProcessControlBlock			*MessageSuspendListHead;												// MessageSuspendList
+ProcessControlBlock			*DiskQueueHead;															// DiskQueueList
 
 ProcessControlBlock			*PCB_Transfer_Timer_To_Ready;											// used to transfer PCB in interrupt
 ProcessControlBlock			*PCB_Transfer_Ready_To_Timer;											// used to transfer PCB in start_timer
@@ -78,6 +89,7 @@ ProcessControlBlock			*PCB_Transfer_Ready_To_Suspend;											// used to trans
 ProcessControlBlock			*PCB_Transfer_Timer_To_Suspend;											// used to transfer PCB to suspend
 ProcessControlBlock			*PCB_Transfer_Suspend_To_Ready;											// used to transfer PCB in resume
 ProcessControlBlock			*PCB_Change_Priority;													// used for change priority in ReadyQueue
+ProcessControlBlock			*PCB_Transfer_Disk_To_Ready;											// used to transfer PCB in interrupt
 
 ProcessControlBlock			*PCB_Transfer_Timer_To_MsgSuspend;										// used in suspend/resume becuase of send and receive messsage
 ProcessControlBlock			*PCB_Transfer_Ready_To_MsgSuspend;										// used in suspend/resume becuase of send and receive messsage
@@ -93,8 +105,9 @@ ProcessControlBlock			*PCB_Terminating_Processs;												// keep current cont
 ProcessControlBlock			*PCB_Table[MAX_PROCESSES];												// Move PCB Table to array.  //ProcessControlBlock			*ListHead;				// PCB table
 																									// With List, I have to allocate seperate memeory for Table. With array, TimerQueue and ReadQueue can point to same as array
 
-PageFrameMapping			*PFM_Head;																// PHYS_MEM_PGS is all the physical frame we need to map
+PageFrameMapping			*Frame_Table;															// PHYS_MEM_PGS is all the physical frame we need to map
 																									// Table should be pointer because algorithm FIFO LIFO	
+ShadowTable					*ShadowTableHead = NULL;
 
 void	os_create_process(char* process_name, void	*starting_address, INT32 priority, INT32 *process_id, INT32 *error);
 INT32	check_legal_process(char* process_name, INT32 initial_priority);							// check Legal process before create process
@@ -116,6 +129,24 @@ void	message_resume_process_id(INT32  process_id);												// resume specifie
 void	send_message(INT32 target_pid, char *message, INT32 send_length, INT32 *process_error_return);
 void	receive_message(INT32 source_pid, char *message, INT32 receive_length, INT32 *send_length, INT32 *send_pid, INT32 *process_error_return);
 
+void	start_disk(INT32 disk_id, INT32 sector, char data[PGSIZE], INT32 operation);
+void	write_disk(INT32 disk_id, INT32 sector, char data[PGSIZE]);
+void	read_disk(INT32 disk_id, INT32 sector, char data[PGSIZE]); 
+
+
+INT32	get_empty_frame(INT32	logicalPageRequest);
+INT32	find_suitable_page(INT32 logicalPageRequest);
+void	get_free_disk_sector(INT16	*diskPtr, INT16 *sectorPtr);
+void	mem_to_disk(INT32 frame, INT32	logicalPageRequest);
+void	disk_to_mem(INT32 frame, INT32	logicalPageRequest);
+void	update_frame_table(INT32 pageRequest, INT32 frame);
+PageFrameMapping *get_frame_if_full(INT32 logicalPageRequest, INT16 algothm);
+void	remove_from_shadow(ShadowTable **head, INT32 remove_id );
+INT32	get_frame_in_FrameTable(INT32 pageRequest);
+INT32	get_frame_in_ShadowTable(INT32 pageRequest, char data[PGSIZE]);
+PageFrameMapping *	get_FrameTable_entry(INT32 frame);
+ShadowTable* get_shadowTable_entry(INT32 pageRequest, INT32 frame) ;
+
 void	LockTimer (INT32 *timer_lock_result);
 void	UnLockTimer (INT32 *timer_lock_result);
 void	LockReady (INT32 *ready_lock_result);
@@ -130,8 +161,10 @@ void	LockMessageQueue (INT32 *message_lock_result);
 void	UnLockMessageQueue (INT32 *message_lock_result);
 void	LockSuspendListMessage (INT32 *message_suspend_list_result);
 void	UnLockSuspendListMessage (INT32 *message_suspend_list_result);
-
-
+void	LockDiskQueue (INT32 *disk_queue_lock);
+void	UnLockDiskQueue (INT32 *disk_queue_lock);
+void	LockDiskAccess(INT32 *disk_access_lock);
+void	UnLockDiskAccess (INT32 *disk_access_lock);
 /**************************************************************** hdduong> **********************************************************************************/
 
 
@@ -147,9 +180,12 @@ void    interrupt_handler( void ) {
     INT32              Index = 0;
 	INT32			   Time;
 	INT32			   *new_update_time;										// for Relative time from new head after put into Ready queue
+	INT32				disk_index;												// INTERRUPT - 4
+	INT32				tmpWR = 0;
 	ProcessControlBlock	*tmp = NULL;											// check front of time queue head
-
+	ProcessControlBlock	*tmpDisk = NULL;									// check front of disk queue head
 	
+
 	// Get cause of interrupt
     CALL( MEM_READ(Z502InterruptDevice, &device_id ) );
 
@@ -161,6 +197,7 @@ void    interrupt_handler( void ) {
 
 	if ( device_id == TIMER_INTERRUPT && status == ERR_SUCCESS ) {
 		
+		interrupt_lock = TRUE;
 
 		MEM_READ(Z502ClockStatus, &Time);													// read current time and compare to front of Timer queue
 		
@@ -170,9 +207,6 @@ void    interrupt_handler( void ) {
 
 		tmp = TimerQueueHead;
 		while ( (tmp!= NULL) && (tmp->wakeup_time <= Time) ) {
-			//debug
-			//printf (" ...ready ... process_id: %d, wake-up: %d, Time: %d \n", tmp->process_id, tmp->wakeup_time, Time);
-			//debug
 
 			PCB_Transfer_Timer_To_Ready = DeQueue(&TimerQueueHead);							// take off front Timer queue
 
@@ -189,27 +223,105 @@ void    interrupt_handler( void ) {
 		if (tmp != NULL) {
 			new_update_time = (INT32*) malloc(sizeof(INT32));
 			MEM_READ(Z502ClockStatus, &Time);			
-			*new_update_time = tmp->wakeup_time - Time;							// there: tmp== NULL or tmp->wakeup_time > Time
+			*new_update_time = tmp->wakeup_time - Time;						// there: tmp== NULL or tmp->wakeup_time > Time
 			
 			if (*new_update_time > 0) {										// if time is not pass
 				MEM_WRITE(Z502TimerStart, new_update_time);						// set timer based on new timer queue head
-				//debug
-				//printf("... Ready... new_update_time: %d \n",*new_update_time);
-				//debug
 			}
 			else {															// time already pass
 				MEM_WRITE(Z502TimerStart, &generate_interrupt_immediately);
-				//debug
-				//printf("... Ready... Time Pass... IMMEDIATELY GEN: \n");
-				//debug
 			}
 			free(new_update_time);
 		}
+		interrupt_lock = FALSE;
 
 		CALL( UnLockTimer(&timer_queue_result) );									// should have lock here otherwise something come in before update start_timer
+		
+		
 	}
 	
+	else if ( ( device_id == DISK_INTERRUPT) ||
+		(device_id == DISK_INTERRUPT_DISK1) || 
+		(device_id == DISK_INTERRUPT_DISK2 ) || 
+		(device_id == DISK_INTERRUPT_DISK3 ) || 
+		(device_id == DISK_INTERRUPT_DISK4 ) ||
+		(device_id == DISK_INTERRUPT_DISK5 ) ||
+		(device_id == DISK_INTERRUPT_DISK6 ) ||
+		(device_id == DISK_INTERRUPT_DISK7 ) ||
+		(device_id == DISK_INTERRUPT_DISK8 ) ||
+		(device_id == DISK_INTERRUPT_DISK9 ) ||
+		(device_id == DISK_INTERRUPT_DISK10 ) 
+		){
+			
+		
+			//CALL( LockDiskAccess(&disk_access_lock) );
+			while(interrupt_lock);   // it need check interrupt lock 
+            interrupt_lock = TRUE;
+			while(disk_lock);        // check disk lock
+            disk_lock = TRUE;
+			
+			disk_index = device_id - 4;
+
+			CALL (LockDiskQueue(&disk_queue_lock));
+			//PCB_Transfer_Disk_To_Ready = NULL; //reset
+			PCB_Transfer_Disk_To_Ready = DeQueueWithDiskId(&DiskQueueHead,disk_index);							// take off front Disk queue
+			CALL (UnLockDiskQueue(&disk_queue_lock));
+
+			if (PCB_Transfer_Disk_To_Ready == NULL)  {
+				//debug
+				//printf("@interrupt_hanlder NULL at disk queue.\n");
+				//debug
+				disk_lock = FALSE;
+				interrupt_lock = FALSE;
+	
+				MEM_WRITE(Z502InterruptClear, &Index );
+	
+				return;
+			}
+			//debug
+			printf("Interrupt for Pid = %d  ",PCB_Transfer_Disk_To_Ready->process_id);
+			//debug
+			MEM_WRITE( Z502DiskSetID, &disk_index);
+			MEM_READ( Z502DiskStatus, &tmpWR);				 //check the disk status
+			
+		
+
+			if (tmpWR == DEVICE_FREE) {
+			//debug	
+			printf("@interrupt_handler: device free \n");
+			//debug
+			CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_Disk_To_Ready) );
+
+			switch (PCB_Transfer_Disk_To_Ready->flag ) {
+				case NOT_WRITE_YET:
+					PCB_Transfer_Disk_To_Ready->disk_io.operation = 1;
+					CALL(start_disk(PCB_Transfer_Disk_To_Ready->disk_io.disk_id,
+									PCB_Transfer_Disk_To_Ready->disk_io.sector,
+									PCB_Transfer_Disk_To_Ready->disk_io.buffer,
+									PCB_Transfer_Disk_To_Ready->disk_io.operation) );
+					break;
+
+				case NOT_READ_YET:
+					PCB_Transfer_Disk_To_Ready->disk_io.operation = 0;
+					CALL(start_disk(PCB_Transfer_Disk_To_Ready->disk_io.disk_id,
+									PCB_Transfer_Disk_To_Ready->disk_io.sector,
+									PCB_Transfer_Disk_To_Ready->disk_io.buffer,
+									PCB_Transfer_Disk_To_Ready->disk_io.operation) );
+					break;
+
+			}
+			
+			} else {
+				//printf("@interrupt_handler: device NOT free \n"); 
+				CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_Disk_To_Ready) );
+			}
+			
+	} //else if ( ( device_id == DISK_INTERRUPT) 
+	disk_lock = FALSE;
+	interrupt_lock = FALSE;
+	//CALL( UnLockDiskAccess(&disk_access_lock) );
 	// Clear out this device - we're done with it
+	
     MEM_WRITE(Z502InterruptClear, &Index );
 	
 }                                       /* End of interrupt_handler */
@@ -224,9 +336,15 @@ void    fault_handler( void )
     INT32				status;
     INT32				Index = 0;
 	INT32				error_ret = 0;
+	INT16	            callRequest;
 	INT16				logicalPageNumber;								// page number caused memory error
-	INT16				mapToFrame;
-	PageFrameMapping	*newPFM;										// used in invalid memeory
+	INT32				newFrame;
+	INT32				previousFrame;
+	INT32				shadowFrame;
+	PageFrameMapping	*victimPFM = NULL;										// used in invalid memeory
+	PageFrameMapping	*previousPFM = NULL;									// used in invalid memeory
+	char				data[PGSIZE];
+
     // Get cause of interrupt
     MEM_READ(Z502InterruptDevice, &device_id );
     // Set this device as target of our query
@@ -238,8 +356,7 @@ void    fault_handler( void )
 	switch (device_id)
 	{
 	case PRIVILEGED_INSTRUCTION:
-		printf("\nExiting test1k Because of Violating PRIVILEGED_INSTRUCTION...\n\n");
-		
+		printf("Exiting test1k Because of Violating PRIVILEGED_INSTRUCTION...\n");
 		printf( "Fault_handler: Found vector type %d with value %d\n",
                         device_id, status );
 		CALL(Z502Halt());
@@ -250,27 +367,80 @@ void    fault_handler( void )
 	case INVALID_MEMORY:
 		Z502_PAGE_TBL_ADDR = PCB_Current_Running_Process->pcb_PageTable;		// let the hardware point to. Can move this step so do not assign again and again 	
 
-		newPFM = (PageFrameMapping *)malloc(sizeof(PageFrameMapping));
-		mapToFrame = FindLastOccupiedFrame(PFM_Head);							// next frame to map to
-	
 		logicalPageNumber = (INT16)status;										// VirtualPageNumber is INT16
 				
 		if ( (logicalPageNumber > OUT_OF_UPPER_BOUND_LOGICAL_ADDRESS) || 
 			 (logicalPageNumber < OUT_OF_LOWER_BOUND_LOGICAL_ADDRESS) ) {										// no spot to map
 				//** error check maybe terminate
-			printf("\nExiting because the address is out of bound...\n\n");
+			//printf("\nExiting because the address is out of bound...\n\n");
 			CALL(Z502Halt());
+		}
+		
+		// PAGE Fault genreated because there is not data for page
+		// or Z502_PAGE_TBL_ADDR[page] == 0
+		
+		
+		shadowFrame = get_frame_in_ShadowTable(logicalPageNumber,data); // if this (page,frame) was written before to the disk
+		
+		
+		if (shadowFrame == -1)  {			// never touch before
+			newFrame = get_empty_frame(logicalPageNumber);
+	
+			if (newFrame == -1) {          // Frame_Table is full, get victim frame
+				 victimPFM = get_frame_if_full(logicalPageNumber,PAGE_FIFO_ALGO);
+				 newFrame = victimPFM->frame;
+
+				 mem_to_disk(newFrame,victimPFM->page);
+				 CALL(update_frame_table(logicalPageNumber,newFrame) );    //update Frame_Table with new page entry
+			}
+			// return newFrame there
+		} else if ((shadowFrame != -1)  ) {    // 
+			victimPFM = get_FrameTable_entry(shadowFrame);		// get (page,frame) of victim
+			newFrame = shadowFrame;
+
+			 mem_to_disk(newFrame,victimPFM->page);
+			 CALL(update_frame_table(logicalPageNumber,newFrame) ); 
+			 disk_to_mem(newFrame,logicalPageNumber);
 
 		}
-
-		newPFM->page  = logicalPageNumber;
-
-		AddToMappingTableList(&PFM_Head, newPFM, mapToFrame);								// spot available
 		
-		Z502_PAGE_TBL_ADDR[logicalPageNumber] = mapToFrame;
+		
+		//debug
+		/*if (logicalPageNumber == 9) {
+			printf ("need to debug \n");
+		}*/
+		//debug
+		/*
+		// -1: 2 cases
+		// in shadow has: means wrote to disk before
+		// not in shadow: just new one
+		if (mapToFrame == -1)  { // all the frame is occupied
+			shadowFrame = get_frame_in_ShadowTable(logicalPageNumber,data); // find shadow table a frame with page means reused or not
+			if (shadowFrame == - 1) {							// no reuse page , new. data is trash
+				mapToFrame = find_suitable_page(logicalPageNumber);							// find in Frame_Table
+			}
+			else {   //wrote before. data is value. Reuse page
+				previousPFM = get_FrameTable_entry(shadowFrame);
+				disk_to_mem(previousPFM->frame,logicalPageNumber);			 // requesting data on disk load the data back
+
+				//mapToFrame = find_suitable_page(logicalPageNumber);	 // includre write data (newpage, previous frame) to disk mem_to_disk
+				//newPFM = get_FrameTable_entry(mapToFrame);
+				//disk_to_mem(mapToFrame,logicalPageNumber);
+			
+			}
+		}
+		else {
+			printf ("frame: %d -- page: %d\n",mapToFrame,logicalPageNumber);
+			//newPFM = get_FrameTable_entry(mapToFrame);
+			disk_to_mem(mapToFrame,logicalPageNumber);
+		}
+		*/
+		
+
+		Z502_PAGE_TBL_ADDR[logicalPageNumber] = newFrame;
 		Z502_PAGE_TBL_ADDR[logicalPageNumber] |= PTBL_VALID_BIT;
 		Z502_PAGE_TBL_LENGTH = MEMSIZE;											// equal to number of bytes of pcb_PageTable
-		
+
 		break;
 	case CPU_ERROR:
 		break;
@@ -319,6 +489,17 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 	INT32				message_receive_length_arg;					// RECEIVE_MESSAGE
 	INT32				message_sender_pid_arg;						// RECEIVE_MESSAGE
 
+	long				write_disk_id;
+	long				write_sector;
+	char*				write_data;
+
+	long				read_disk_id;
+	long				read_sector;
+	char*				read_data;
+
+	INT32				tmp;
+	Disk				*writeDisk;
+	Disk				*readDisk;
 
 
     call_type = (short)SystemCallData->SystemCallNumber;
@@ -477,8 +658,56 @@ void    svc (SYSTEM_CALL_DATA *SystemCallData ) {
 			*(INT32 *)SystemCallData->Argument[4] = message_sender_pid_arg;
 			*(INT32 *)SystemCallData->Argument[5] = process_error_arg;
 
-		break;
+			break;
 		
+		case SYSNUM_DISK_WRITE:
+			write_disk_id = (long) SystemCallData->Argument[0];
+			write_sector = (long) SystemCallData->Argument[1];
+			write_data = (char*) SystemCallData->Argument[2];
+			
+
+			PCB_Current_Running_Process->disk_io.disk_id = write_disk_id;
+			PCB_Current_Running_Process->disk_io.sector = write_sector;
+			PCB_Current_Running_Process->disk_io.operation = 1;
+			memcpy(PCB_Current_Running_Process->disk_io.buffer, (INT32*) write_data, BUFFER_DISK_IO_SIZE);
+			
+
+			writeDisk = (Disk*) malloc(sizeof(Disk));
+			writeDisk->disk_id = write_disk_id;
+			writeDisk->sector = write_sector;
+			memcpy(writeDisk->buffer, (INT32*) write_data, BUFFER_DISK_IO_SIZE);
+			CALL(LockDiskAccess(&disk_access_lock));
+			AddToDataWrittenQueue(&WrittenData,writeDisk);
+			CALL(UnLockDiskAccess(&disk_access_lock));
+			write_disk(write_disk_id,write_sector,write_data);
+
+			break;
+
+		case SYSNUM_DISK_READ:
+			read_disk_id = (long) SystemCallData->Argument[0];
+			read_sector = (long) SystemCallData->Argument[1];
+			read_data = (char*) SystemCallData->Argument[2];
+
+			// keep disk io info
+			PCB_Current_Running_Process->disk_io.disk_id = read_disk_id;
+			PCB_Current_Running_Process->disk_io.sector = read_sector;
+			PCB_Current_Running_Process->disk_io.operation = 0;							//0 means read
+			
+			read_disk(read_disk_id,read_sector,read_data);
+			CALL(LockDiskAccess(&disk_access_lock));
+			readDisk = GetDataWithInfo(WrittenData,read_disk_id,read_sector);
+			CALL(UnLockDiskAccess(&disk_access_lock));
+			memcpy((INT32*) SystemCallData->Argument[2],readDisk->buffer, BUFFER_DISK_IO_SIZE);
+
+			//return for comparision right after here
+			//buffer contains data after actually read
+			//if (strcmp(PCB_Current_Running_Process->disk_io.buffer,read_data) != 0) {
+			//	memcpy((INT32*) SystemCallData->Argument[2],PCB_Current_Running_Process->disk_io.buffer, BUFFER_DISK_IO_SIZE);
+			//}
+			//else {
+			//	memcpy((INT32*) SystemCallData->Argument[2],read_data, BUFFER_DISK_IO_SIZE);
+			//}
+			break;
 		default:  
             printf( "ERROR!  call_type not recognized!\n" ); 
             printf( "Call_type is - %i\n", call_type);
@@ -501,7 +730,10 @@ void    osInit( int argc, char *argv[]  ) {
 	INT32				created_process_error;
 	INT32				created_process_id;
 	INT32				test_case_prioirty = 10;
-	
+	INT32				frame = 0;
+	PageFrameMapping	*table = NULL;
+	PageFrameMapping    *tmp = NULL;
+
 
     /* Demonstrates how calling arguments are passed thru to here       */
 
@@ -516,7 +748,6 @@ void    osInit( int argc, char *argv[]  ) {
     TO_VECTOR[TO_VECTOR_INT_HANDLER_ADDR]   = (void *)interrupt_handler;
     TO_VECTOR[TO_VECTOR_FAULT_HANDLER_ADDR] = (void *)fault_handler;
     TO_VECTOR[TO_VECTOR_TRAP_HANDLER_ADDR]  = (void *)svc;
-
     /*  Determine if the switch was set, and if so go to demo routine.  */
 
     if (( argc > 1 ) && ( strcmp( argv[1], "sample" ) == 0 ) ) {
@@ -524,12 +755,32 @@ void    osInit( int argc, char *argv[]  ) {
         Z502SwitchContext( SWITCH_CONTEXT_SAVE_MODE, &next_context );
     }                   /* This routine should never return!!           */
 
+
+
     /*  This should be done by a "os_make_process" routine, so that
         test0 runs on a process recognized by the operating system.  
 
     Z502MakeContext( &next_context, (void *)test0, USER_MODE );
     Z502SwitchContext( SWITCH_CONTEXT_KILL_MODE, &next_context );		*/
 	
+
+	// PageTable
+	while(frame < PHYS_MEM_PGS) {
+		table = (PageFrameMapping *) malloc(sizeof(PageFrameMapping));
+		table->process_id = -1;
+		table->page = -1;
+		table->frame = frame;
+		table->nextPFM = NULL;
+
+		tmp = Frame_Table;
+		if (tmp == NULL) Frame_Table = table;
+		else {
+			while (tmp->nextPFM != NULL)
+				tmp = tmp->nextPFM;
+			tmp->nextPFM = table;
+		}
+		frame++;
+	}
 
 	//----------------------------------------------------------//
 	//		Choose to run test from command line				//
@@ -579,9 +830,26 @@ void    osInit( int argc, char *argv[]  ) {
 	else if (( argc > 1 ) && ( strcmp( argv[1], "test2b" ) == 0 ) ) {
 		CALL( os_create_process("test2b",(void*) test2b,test_case_prioirty, &created_process_id, &created_process_error) );
 	}
+	else if (( argc > 1 ) && ( strcmp( argv[1], "test2c" ) == 0 ) ) {
+		CALL( os_create_process("test2c",(void*) test2c,test_case_prioirty, &created_process_id, &created_process_error) );
+	}
+	else if (( argc > 1 ) && ( strcmp( argv[1], "test2d" ) == 0 ) ) {
+		CALL( os_create_process("test2d",(void*) test2d,test_case_prioirty, &created_process_id, &created_process_error) );
+	}
+	else if (( argc > 1 ) && ( strcmp( argv[1], "test2e" ) == 0 ) ) {
+		CALL( os_create_process("test2e",(void*) test2e,test_case_prioirty, &created_process_id, &created_process_error) );
+	}
+	else if (( argc > 1 ) && ( strcmp( argv[1], "test2f" ) == 0 ) ) {
+		CALL( os_create_process("test2f",(void*) test2f,test_case_prioirty, &created_process_id, &created_process_error) );
+	}
+	else if (( argc > 1 ) && ( strcmp( argv[1], "test2g" ) == 0 ) ) {
+		CALL( os_create_process("test2g",(void*) test2g,test_case_prioirty, &created_process_id, &created_process_error) );
+	}
 	//----------------------------------------------------------//
 	//				Run test manuallly			    			//
 	//----------------------------------------------------------//
+
+	//CALL ( os_create_process("sample",(void*) sample_code,test_case_prioirty, &created_process_id, &created_process_error) );
 
 	//CALL ( os_create_process("test0",(void*) test0,test_case_prioirty, &created_process_id, &created_process_error) );
 	
@@ -612,6 +880,16 @@ void    osInit( int argc, char *argv[]  ) {
 	//CALL ( os_create_process("test2a",(void*) test2a,test_case_prioirty, &created_process_id, &created_process_error) );
 
 	//CALL ( os_create_process("test2b",(void*) test2b,test_case_prioirty, &created_process_id, &created_process_error) );
+
+	//CALL ( os_create_process("test2c",(void*) test2c,test_case_prioirty, &created_process_id, &created_process_error) );
+
+	//CALL ( os_create_process("test2d",(void*) test2d,test_case_prioirty, &created_process_id, &created_process_error) );
+
+	//CALL ( os_create_process("test2e",(void*) test2e,test_case_prioirty, &created_process_id, &created_process_error) );
+
+	//CALL ( os_create_process("test2f",(void*) test2f,test_case_prioirty, &created_process_id, &created_process_error) );
+
+	CALL ( os_create_process("test2g",(void*) test2g,test_case_prioirty, &created_process_id, &created_process_error) );
 }                                               // End of osInit
 
 
@@ -791,7 +1069,7 @@ void make_ready_to_run(ProcessControlBlock **head_of_ready, ProcessControlBlock 
 
 	if (already_run_main_test == FALSE) {
 		already_run_main_test= TRUE;
-		
+	
 		if ( strcmp(pcb->process_name, "test0") == 0 ) {
 			use_priority_queue = FALSE;
 			CALL( dispatcher() );
@@ -852,6 +1130,27 @@ void make_ready_to_run(ProcessControlBlock **head_of_ready, ProcessControlBlock 
 			use_priority_queue = FALSE;
 			CALL( dispatcher() );
 		}
+		else if ( strcmp(pcb->process_name, "test2c") == 0 ) {
+			use_priority_queue = FALSE;
+			CALL( dispatcher() );
+		}
+		else if ( strcmp(pcb->process_name, "test2d") == 0 ) {
+			use_priority_queue = TRUE;
+			//use_priority_queue = FALSE;
+			CALL( dispatcher() );
+		}
+		else if ( strcmp(pcb->process_name, "test2e") == 0 ) {
+			use_priority_queue = FALSE;
+			CALL( dispatcher() );
+		}
+		else if ( strcmp(pcb->process_name, "test2f") == 0 ) {
+			use_priority_queue = FALSE;
+			CALL( dispatcher() );
+		}
+		else if ( strcmp(pcb->process_name, "test2g") == 0 ) {
+			use_priority_queue = TRUE;
+			CALL( dispatcher() );
+		}
 	}
 
 }
@@ -883,7 +1182,7 @@ void terminate_proccess_id(INT32 process_id, INT32* error_return)
 	INT32	*new_start_timer;
 
 	
-	CALL( process_printer("Kill",-1,process_id,-1,TERMINATE_BEFORE) );
+	//CALL( process_printer("Kill",-1,process_id,-1,TERMINATE_BEFORE) );
 	
 
 	if ( !IsExistsProcessIDArray(PCB_Table,  process_id, number_of_processes_created) ) {							//invalid process_id
@@ -915,8 +1214,16 @@ void terminate_proccess_id(INT32 process_id, INT32* error_return)
 			
 			CALL(UnLockTimer (&timer_queue_result) );
 		}
+		//if (IsExistsProcessIDQueue(DiskQueueHead,process_id) ) {
+		//	CALL(LockDiskQueue(&disk_queue_lock) );
+		//	CALL( RemoveProcessFromQueue(&DiskQueueHead,process_id) );	
+		//	//debug
+		//	//printf("@terminate remove pid = %d from diskQueueHead \n",process_id);
+		//	//debug
+		//	CALL(UnLockDiskQueue (&disk_queue_lock) );
+		//}
 
-		CALL( process_printer("Kill",-1,process_id,-1,TERMINATE_AFTER) );
+		//CALL( process_printer("Kill",-1,process_id,-1,TERMINATE_AFTER) );
 											
 		CALL( RemoveFromArray(PCB_Table,process_id,number_of_processes_created) );			// remove from PCB table by set state status = TERMINATE
 		
@@ -944,12 +1251,23 @@ void dispatcher() {
 	
 	INT32			   Time;
 	INT32			   *new_update_time;										// for Relative time from new head after put into Ready queue
-	ProcessControlBlock	*tmp = NULL;											
+	ProcessControlBlock	*tmp = NULL;	
+
+	INT32			numIdle = 0;
 
 	while (IsQueueEmpty(ReadyQueueHead)) {
+
+		
+		
+
+		//CALL();
+
+		//while (disk_lock);
 		//debug
 		//MEM_READ(Z502ClockStatus, &Time);	
 		//debug
+
+		//if (!IsQueueEmpty(ReadyQueueHead)) break;
 
 		//-------------------------------------------------//
 		//	test1e: all in suspend list. Nothing wake up   //
@@ -960,6 +1278,8 @@ void dispatcher() {
 				CALL( printf("Test1e: Self-Suspend Allowed. I Myself test1e Suspends Myself. No One wakes me up then the Program Halts... \n") );
 				CALL(Z502Halt());
 		}
+		//if (!IsQueueEmpty(ReadyQueueHead)) break;
+		
 		//-----------------------------------------------//
 		//			bug fix: test0, test1a				 //
 		//-----------------------------------------------//
@@ -968,19 +1288,39 @@ void dispatcher() {
 			(PCB_Current_Running_Process == NULL) ) {
 				CALL(Z502Halt());
 		}
-		CALL();
+		//if (!IsQueueEmpty(ReadyQueueHead)) break;
+		
+		while (interrupt_lock) numIdle =1; 
+		
+		//if ( (!interrupt_lock) && (IsQueueEmpty(ReadyQueueHead)) )
+		if ( (IsQueueEmpty(ReadyQueueHead)) && (!IsQueueEmpty(DiskQueueHead) ) ) {
+			//printf("@dispatcher: blank ready Queue %d \n", numIdle);
+			//while (interrupt_lock) numIdle =1; 
+			if (numIdle == 0) {
+			//	numIdle = 1;
+				CALL(Z502Idle());
+			}
+		}
+		else if ( (IsQueueEmpty(ReadyQueueHead)) && (IsQueueEmpty(DiskQueueHead) ) ){
+			CALL(Z502Halt());
+		}
+		//printf("loooping \n");
+		//CALL();
+		//while (interrupt_lock) numIdle=1;
+		//while (disk_lock) numIdle = 2;
 	}
-
+	//while (disk_lock);
+	numIdle = 0;
 	CALL( LockReady(&ready_queue_result) );										// do not put Lock before while because Interrupt handler might wants to lock while loop 
 																				// then wait forever				
 	 
-	CALL ( process_printer("Run",-1,-1,-1,DISPATCH_BEFORE)  );
+	//CALL ( process_printer("Run",-1,-1,-1,DISPATCH_BEFORE)  );
 	
 	
 	PCB_Current_Running_Process = DeQueue(&ReadyQueueHead);												// take out from ReadyQueue
 	PCB_Current_Running_Process->state = PROCESS_STATE_RUNNING;											// make running process
 
-	CALL ( process_printer("Run",-1,-1,-1,DISPATCH_AFTER) );
+	//CALL ( process_printer("Run",-1,-1,-1,DISPATCH_AFTER) );
 	
 	CALL( UnLockReady(&ready_queue_result) );
 	
@@ -1189,6 +1529,20 @@ void	UnLockSuspendListMessage (INT32 *message_suspend_list_result) {
 	READ_MODIFY( MEMORY_INTERLOCK_BASE + MSG_SUSPEND_LOCK, DO_UNLOCK, SUSPEND_UNTIL_LOCKED, message_suspend_list_result );
 }
 
+
+void	LockDiskQueue  (INT32 *disk_queue_lock) {
+	READ_MODIFY( MEMORY_INTERLOCK_BASE + DISK_QUEUE_LOCK, DO_LOCK, SUSPEND_UNTIL_LOCKED, disk_queue_lock );
+}
+void	UnLockDiskQueue  (INT32 *disk_queue_lock) {
+	READ_MODIFY( MEMORY_INTERLOCK_BASE + DISK_QUEUE_LOCK, DO_UNLOCK, SUSPEND_UNTIL_LOCKED, disk_queue_lock );
+}
+
+void	LockDiskAccess  (INT32 *disk_access_lock) {
+	READ_MODIFY( MEMORY_INTERLOCK_BASE + DISK_ACCESS_LOCK, DO_LOCK, SUSPEND_UNTIL_LOCKED, disk_access_lock );
+}
+void	UnLockDiskAccess  (INT32 *disk_access_lock) {
+	READ_MODIFY( MEMORY_INTERLOCK_BASE + DISK_ACCESS_LOCK, DO_UNLOCK, SUSPEND_UNTIL_LOCKED, disk_access_lock );
+}
 
 
 /*******************************************************************************************************************************
@@ -1828,7 +2182,6 @@ which is used in SUSPEND_PROCESS and RECEIVE_PROCESS.
 
 void message_suspend_process_id(INT32  process_id)
 {
-	INT32						legal_suspend_process; 
 	BOOL						in_ready_queue;
 	BOOL						in_timer_queue;
 	INT32						*new_update_time;
@@ -1909,7 +2262,6 @@ The process to be resumed taken out from Suspend List and put in ReadyQueue by c
 
 void message_resume_process_id(INT32  process_id)
 {
-	INT32					legal_resume_process; 
 	ProcessControlBlock		*tmp;	
 
 	
@@ -1923,4 +2275,483 @@ void message_resume_process_id(INT32  process_id)
 	
 	CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_MsgSuspend_To_Ready) );
 	
+}
+
+
+void write_disk(INT32 disk_id, INT32 sector, char data[PGSIZE])   //disk write,handle system call
+{
+    INT32 temp;
+
+	while(disk_lock);  //check the disklock
+    disk_lock = TRUE;
+   
+   
+    MEM_WRITE( Z502DiskSetID, &disk_id );
+    MEM_READ( Z502DiskStatus, &temp );  //check disk status
+    if ( temp == DEVICE_FREE )
+    {
+		INT32 operation = 1;		
+		//debug
+		printf("free @ write_disk: pid: %d -- disk_id: %d -- sector: %d\n",PCB_Current_Running_Process->process_id,disk_id,sector);
+		//debug
+		CALL(start_disk(disk_id,sector,data,operation) );   //begin work
+		
+		disk_lock = FALSE;
+		//CALL(dispatcher());
+        
+		return;
+    }
+   
+	//debug
+	printf("busy @ write_disk: pid: %d -- disk_id: %d -- sector: %d\n",PCB_Current_Running_Process->process_id,disk_id,sector);
+	//debug
+
+	CALL(LockDiskQueue(&disk_queue_lock));
+	PCB_Current_Running_Process->flag = NOT_WRITE_YET;
+	PCB_Current_Running_Process->disk_io.operation = 1; // next is write);
+	CALL(AddToDiskQueue(&DiskQueueHead, PCB_Current_Running_Process) );
+	CALL(UnLockDiskQueue(&disk_queue_lock));
+
+	disk_lock = FALSE;
+
+	CALL(dispatcher());
+    return;
+}
+
+void read_disk(INT32 disk_id, INT32 sector, char data[PGSIZE])   //disk read,handle system call
+{
+    INT32 temp;
+    
+   	while(disk_lock);  //check the disklock
+    disk_lock = TRUE;
+
+	MEM_WRITE( Z502DiskSetID, &disk_id );
+    MEM_READ( Z502DiskStatus, &temp );  //check disk status
+    if ( temp == DEVICE_FREE ) {   //begin work
+		INT32 operation = 0;
+        //debug
+		printf("free @ read_disk: pid: %d -- disk_id: %d -- sector: %d\n",PCB_Current_Running_Process->process_id,disk_id,sector);
+		//debug
+
+		CALL(start_disk(disk_id, sector, data, operation) );
+
+		disk_lock = FALSE;
+        return;
+    }
+	
+	
+	//debug
+	printf("busy @ read_disk: pid: %d -- disk_id: %d -- sector: %d\n",PCB_Current_Running_Process->process_id,disk_id,sector);
+	//debug
+	CALL(LockDiskQueue(&disk_queue_lock));
+	PCB_Current_Running_Process->flag = NOT_READ_YET;
+	PCB_Current_Running_Process->disk_io.operation = 0;		//next is read
+	CALL(AddToDiskQueue(&DiskQueueHead, PCB_Current_Running_Process) );
+    CALL(UnLockDiskQueue(&disk_queue_lock));
+
+    disk_lock = FALSE;
+    CALL(dispatcher() );
+    return;
+}
+
+void start_disk(INT32 disk_id, INT32 sector, char data[PGSIZE], INT32 operation)  
+{
+	
+    INT32 temp;
+
+    MEM_WRITE( Z502DiskSetID, &disk_id);
+    MEM_READ( Z502DiskStatus, &temp );
+
+    MEM_WRITE( Z502DiskSetSector, &sector);
+
+    MEM_WRITE( Z502DiskSetBuffer, (INT32 *)(data) );
+
+    MEM_WRITE( Z502DiskSetAction, &operation);
+
+    temp = 0;
+    MEM_WRITE( Z502DiskStart, &temp );
+
+	// debug
+	if (operation == 0) {
+		printf("read @ start_disk: disk_id: %d, sector %d\n", disk_id,sector);
+	} else if (operation == 1) {
+		
+		printf("write @ start_disk: disk_id: %d, sector %d\n", disk_id,sector);
+	}
+	// debug
+}
+
+
+INT32 get_empty_frame(INT32	logicalPageRequest) {
+	PageFrameMapping *tmp = Frame_Table;
+
+	while(tmp != NULL) {
+		if (tmp->page == -1) {
+			tmp->process_id = PCB_Current_Running_Process->process_id;
+			tmp->page = logicalPageRequest;
+			mark_fifo_page++;
+
+			return tmp->frame;							//set init value in OS_Init
+		}
+		tmp = tmp->nextPFM;
+	}
+	return -1;											// mean Frame_Table is full
+
+}
+
+INT32 find_suitable_page(INT32 logicalPageRequest) {
+	INT32					frame = -1;
+	PageFrameMapping		*frameTable;
+	INT16					requestType = -1;
+
+
+	frame = get_empty_frame(logicalPageRequest);
+	
+	if (frame != -1)
+		return frame;
+	
+	// page full
+	frameTable = get_frame_if_full(logicalPageRequest,PAGE_FIFO_ALGO);
+	frame = frameTable->frame;
+
+	if (frame == -1) {
+		printf("Cannot allocate more frame (FULL) \n");
+		CALL(Z502Halt());
+	}
+
+	// Get a frame and know it not free there.
+	// mem_to_disk does
+	// 1. write current data in memory to disk (Frame_Table & Shadow)
+	// 2. update link
+	//debug
+	/*if (frame == 28 ) {
+		printf("need to debug");
+	}*/
+	//debug
+	//mem_to_disk(frame,logicalPageRequest);
+
+	return frame;
+
+
+}
+
+PageFrameMapping *get_frame_if_full(INT32 logicalPageRequest, INT16 algothm) {
+	
+	INT32		frame = -1;
+
+	
+	PageFrameMapping			*tmp = Frame_Table;
+	PageFrameMapping			*table = NULL;
+
+	switch(algothm) {
+	
+	case PAGE_FIFO_ALGO:
+		while(tmp != NULL) {
+			if(tmp->frame == (mark_fifo_page % PHYS_MEM_PGS) ) {
+				table = tmp;
+				mark_fifo_page++;
+				return table;
+			}
+			tmp = tmp->nextPFM;
+		}
+		
+		break;
+
+	case PAGE_LRU_ALGO:
+		
+		break;
+
+	default:
+		
+		break;
+	
+	}
+}
+
+
+void mem_to_disk(INT32 frame, INT32	logicalPageRequest) {
+	INT16	disk_id;
+	INT16	sector;
+	INT32	DISK;
+	INT32	SECTOR;
+	char	data[PGSIZE];
+	INT32	tmp;
+	Disk	*writeDisk;
+	ShadowTable *newShadowEntry = NULL;
+	PageFrameMapping *frameTable = NULL;
+
+	//frameTable = get_FrameTable_entry(frame);
+
+	CALL(get_free_disk_sector(&disk_id,&sector));
+
+	//write to shadow table
+ 	newShadowEntry =  (ShadowTable *) malloc(sizeof(ShadowTable));
+	newShadowEntry->process_id = PCB_Current_Running_Process->process_id;//frameTable->process_id;
+	newShadowEntry->page = logicalPageRequest;//frameTable->page;
+	newShadowEntry->frame = frame;//frameTable->frame;
+	newShadowEntry->disk = disk_id;
+	newShadowEntry->sector = sector;
+	newShadowEntry->next = NULL;
+
+	//get the data
+	Z502ReadPhysicalMemory(frame,newShadowEntry->buffer);		
+	//CALL(MEM_READ(frameTable->page * PGSIZE, (INT32*) data) );
+	memcpy(data,(INT32*)newShadowEntry->buffer,PGSIZE);
+
+	CALL(AddToShadowTable(&ShadowTableHead,newShadowEntry,&countShadowEntry) );
+	
+	/*
+	Z502_PAGE_TBL_ADDR[frameTable->page] = frameTable->frame;
+	Z502_PAGE_TBL_ADDR[frameTable->page] |= PTBL_VALID_BIT;
+	Z502_PAGE_TBL_LENGTH = MEMSIZE;	
+	*/
+
+	//Update PCB
+	PCB_Current_Running_Process->disk_io.disk_id = disk_id;
+	PCB_Current_Running_Process->disk_io.sector = sector;
+
+	//read data from memory
+	Z502_PAGE_TBL_ADDR[logicalPageRequest] = 0;							//Clear page table, will be set back in fault handler.
+	//CALL(update_frame_table(logicalPageRequest,frame) );    //update Frame_Table with new page entry
+
+
+	//Write to disk
+	DISK = disk_id;
+	SECTOR = sector;
+	
+	write_disk(DISK,SECTOR,data);
+	
+	/*
+	while(disk_lock);  //check the disklock
+    disk_lock = TRUE;
+	CALL( MEM_WRITE( Z502DiskSetID, &DISK ) );
+	
+	CALL( MEM_READ( Z502DiskStatus, &tmp ) );
+    while( tmp != DEVICE_FREE )  {
+		CALL( Z502Idle() );          //for here the process only wait the disk until it free
+        CALL( MEM_WRITE( Z502DiskSetID, &DISK ) );       
+        CALL( MEM_READ( Z502DiskStatus, &tmp ) );
+    }
+
+    CALL( MEM_WRITE( Z502DiskSetSector, &SECTOR ) );
+    CALL( MEM_WRITE( Z502DiskSetBuffer, (INT32*)data ) );
+       
+    tmp = 1;
+    CALL( MEM_WRITE( Z502DiskSetAction, &tmp ) );
+       
+    tmp = 0;                        // Must be set to 0
+    CALL( MEM_WRITE( Z502DiskStart, &tmp ) );
+
+	
+	//CALL(LockDiskQueue(&disk_queue_lock));
+	//CALL(AddToDiskQueue(&DiskQueueHead, PCB_Current_Running_Process) );
+	//CALL(UnLockDiskQueue(&disk_queue_lock));
+	disk_lock = FALSE;
+	*/
+
+	//CALL(dispatcher());
+
+}
+
+
+
+void disk_to_mem(INT32 frame, INT32 logicalPageRequest) {
+	ShadowTable *tmpShadow = ShadowTableHead;
+	INT16	disk_id;
+	INT16	sector;
+	INT32	DISK;
+	INT32	SECTOR;
+	INT32	tmp;
+	char	data[PGSIZE];
+	Disk	*readDisk;
+	PageFrameMapping *frameTable = get_FrameTable_entry(frame);
+
+	INT32	pid = frameTable->process_id;
+	INT32   page = frameTable->page;
+
+	
+	memset(&data[0],0,sizeof(data));
+	
+	//while(tmpShadow  != NULL) {
+	//	if ( (tmpShadow->page == page) && (tmpShadow->process_id == pid) ) {
+	tmpShadow = get_shadowTable_entry(logicalPageRequest,frame);
+
+	if (tmpShadow != NULL) { //already has data. Bring it back
+			disk_id = tmpShadow->disk;
+			sector = tmpShadow->sector;
+			
+			DISK = disk_id;
+			SECTOR = sector;
+
+			//while(disk_lock);  //check the disklock
+			//disk_lock = TRUE;
+			
+			
+			CALL( MEM_WRITE( Z502DiskSetID, &DISK) );
+			CALL( MEM_READ( Z502DiskStatus, &tmp ) );
+
+            while( tmp != DEVICE_FREE ){
+                CALL( Z502Idle() );            //for here the process only wait the disk until it free
+                CALL( MEM_WRITE( Z502DiskSetID, &DISK) );       
+                CALL( MEM_READ( Z502DiskStatus, &tmp ) );
+            }
+             /*
+			// begin read disk
+            CALL( MEM_WRITE( Z502DiskSetSector, &SECTOR ) );
+            CALL( MEM_WRITE( Z502DiskSetBuffer, (INT32*)data ) );
+               
+            tmp = 0;
+            CALL( MEM_WRITE( Z502DiskSetAction, &tmp ) );
+              
+            tmp = 0;                   // Must be set to 0
+            CALL( MEM_WRITE( Z502DiskStart, &tmp ) );
+			*/
+			//CALL(LockDiskQueue(&disk_queue_lock));
+			//CALL(AddToDiskQueue(&DiskQueueHead, PCB_Current_Running_Process) );
+			//CALL(UnLockDiskQueue(&disk_queue_lock));
+			
+			read_disk(DISK,SECTOR,data);
+			//disk_lock = FALSE;
+			
+			//CALL(dispatcher());
+
+			/*
+			Z502_PAGE_TBL_ADDR[logicalPageRequest] = frameTable->frame;
+			Z502_PAGE_TBL_ADDR[frameTable->page] |= PTBL_VALID_BIT;
+			Z502_PAGE_TBL_LENGTH = MEMSIZE;	
+			*/
+
+			//CALL( MEM_WRITE(page*PGSIZE, (INT32*)data) );
+			//CALL( MEM_WRITE(page*PGSIZE, (INT32*)tmpShadow->buffer) );
+			Z502WritePhysicalMemory(frame,tmpShadow->buffer);		
+
+			remove_from_shadow(&ShadowTableHead, tmpShadow->shadow_id );
+			return;
+		} //if (tmpShadow != NULL)
+	else if (tmpShadow == NULL) {
+		//Z502ReadPhysicalMemory
+	}
+	//}
+	
+	//Z502WritePhysicalMemory(frameTable->frame,tmpShadow->buffer);		
+
+		//tmpShadow = tmpShadow->next;
+	//}
+
+
+}
+
+void get_free_disk_sector(INT16	*diskPtr, INT16 *sectorPtr) {
+	INT16 disk, sector;
+
+	
+	for (disk = 1; disk <= MAX_NUMBER_OF_DISKS;disk++) {
+		for (sector =1; sector <= MAX_NUMBER_OF_SECTORS; sector++) {
+			if (MAP_DISK_SECTOR[disk][sector] == 0) {
+				MAP_DISK_SECTOR[disk][sector] = 1;
+				*diskPtr  = disk;
+				*sectorPtr = sector;
+				return;
+			}
+		}
+	}
+}
+
+void update_frame_table(INT32 pageRequest, INT32 frame){
+	PageFrameMapping *tmp = Frame_Table;
+	while (tmp != NULL) {
+		if (tmp->frame == frame) {
+			tmp->page = pageRequest;
+			tmp->process_id = PCB_Current_Running_Process->process_id;
+			return;
+		}
+		tmp = tmp->nextPFM;
+	}
+
+}
+
+
+void remove_from_shadow(ShadowTable **head, INT32 remove_id ){
+	ShadowTable *tmpShadow = (*head);
+	ShadowTable *prev = NULL;
+
+	while(tmpShadow != NULL){
+		if(tmpShadow->shadow_id == remove_id){
+			if(prev == NULL){
+				(*head) = tmpShadow->next;
+				free(tmpShadow);
+				return;
+			}
+			else if (tmpShadow->next == NULL){
+				prev->next = NULL;
+				free(tmpShadow);
+				return;
+			}
+			else{
+				prev->next = tmpShadow->next;
+				free(tmpShadow);
+				return;
+			}
+		}
+		prev = tmpShadow;
+		tmpShadow = tmpShadow->next;
+	}
+}
+
+
+INT32	get_frame_in_FrameTable(INT32 pageRequest) {
+	PageFrameMapping *tmp = Frame_Table;
+	while (tmp != NULL) {
+		if (tmp->page == pageRequest) {
+			return tmp->frame;
+		}
+		tmp = tmp->nextPFM;
+	}
+
+	return -1;
+}
+
+
+PageFrameMapping *get_FrameTable_entry(INT32 frame) {
+	PageFrameMapping *tmp = Frame_Table;
+	while (tmp != NULL) {
+		if (tmp->frame == frame) {
+			return tmp;
+		}
+		tmp = tmp->nextPFM;
+	}
+
+	return NULL;
+}
+
+
+
+
+INT32 get_frame_in_ShadowTable(INT32 pageRequest, char data[PGSIZE]) {
+	ShadowTable *tmpShadow = ShadowTableHead;
+
+	while(tmpShadow != NULL){
+		if ( (tmpShadow->page == pageRequest) && 
+			(tmpShadow->process_id == PCB_Current_Running_Process->process_id) ) {
+				memcpy(data, (INT32*)tmpShadow->buffer, PGSIZE);
+				return tmpShadow->frame;
+		}
+		tmpShadow = tmpShadow->next;
+	}
+	return -1; // does not exist before
+}
+
+
+ShadowTable* get_shadowTable_entry(INT32 pageRequest, INT32 frame) {
+	ShadowTable *tmpShadow = ShadowTableHead;
+
+	while(tmpShadow != NULL){
+		if ( (tmpShadow->page == pageRequest) && (tmpShadow->frame == frame) &&
+			(tmpShadow->process_id == PCB_Current_Running_Process->process_id) ) {
+			
+				return tmpShadow;
+		}
+		tmpShadow = tmpShadow->next;
+	}
+	return NULL; // does not exist before
 }

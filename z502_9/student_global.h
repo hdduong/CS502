@@ -40,6 +40,8 @@
 #define			SUSPEND_LOCK							5L
 #define			PRIORITY_LOCK							6L
 #define			MSG_SUSPEND_LOCK						7L
+#define			DISK_QUEUE_LOCK							8L
+#define			DISK_ACCESS_LOCK						9L
 
 
 #define			PROCESS_SUSPEND_INVALID_PROCESS_ID		1L
@@ -95,4 +97,36 @@
 
 #define			OUT_OF_UPPER_BOUND_LOGICAL_ADDRESS		1023
 #define			OUT_OF_LOWER_BOUND_LOGICAL_ADDRESS		0
+
+#define			DISK_IO_BUFF_SIZE						16
+#define			PG_TABLE_LENGTH							1024
+#define			FRAME_LENGTH							64
+
+#define			FRAME_AVAILABLE							0x8000
+#define			FRAME_USED								0x4000
+
+#define			BUFFER_DISK_IO_SIZE						16
+
+#define         DISK_INTERRUPT_DISK3					(short)7
+#define         DISK_INTERRUPT_DISK4					(short)8
+#define         DISK_INTERRUPT_DISK5					(short)9
+#define         DISK_INTERRUPT_DISK6					(short)10
+#define         DISK_INTERRUPT_DISK7					(short)11
+#define         DISK_INTERRUPT_DISK8					(short)12
+#define         DISK_INTERRUPT_DISK9					(short)13
+#define         DISK_INTERRUPT_DISK10					(short)14
+#define         DISK_INTERRUPT_DISK11					(short)15
+#define         DISK_INTERRUPT_DISK12					(short)16
+
+#define			NOT_WRITE_YET							1L
+#define			NOT_READ_YET							2L
+#define			ALREADY_WRITE							3L
+#define			ALREADY_READ							4L
+
+#define			PAGE_FIFO_ALGO							20L
+#define			PAGE_LRU_ALGO							30L
+
+#define			MAX_NUMBER_OF_SECTORS					1600
+
+
 #endif

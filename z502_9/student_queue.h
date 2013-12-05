@@ -5,7 +5,8 @@
 *********************************************************************/
 #include "global.h"
 #include "student_global.h"
-
+#include "syscalls.h"
+#include "protos.h"
 
 
 typedef struct StructMessage {
@@ -22,6 +23,40 @@ typedef struct StructMessage {
 } Message;
 
 
+typedef struct StructDisk {
+	INT32				disk_id;
+	INT32				sector;
+	char				buffer[DISK_IO_BUFF_SIZE];
+	INT32				operation;
+	struct				StructDisk			*nextData;
+	INT32				process_id;
+} Disk;
+
+/*
+typedef struct StructDiskMemory {
+	INT32				process_id;
+	INT32				disk_id;
+	INT32				sector;
+	
+	struct				StructDiskMemory			*next;
+	INT32				page;
+	INT32				frame;
+} DiskMemory;
+*/
+
+
+
+typedef struct StructShadowTable {
+	INT32				shadow_id;
+	INT32				process_id;
+	INT32				page;
+	INT32				frame;
+	INT32				disk;
+	INT32				sector;
+	struct				StructShadowTable		*next;
+	char				buffer[DISK_IO_BUFF_SIZE];
+} ShadowTable;
+
 
 typedef struct StructProcessControlBlock
 {
@@ -37,6 +72,9 @@ typedef struct StructProcessControlBlock
 	Message				*sentBoxQueue;									// sent message queue
 
 	UINT16				pcb_PageTable[MEMSIZE];							// Page table of each PCB 1024
+
+	Disk				disk_io;
+	INT32				flag;											// disk read or not
 } ProcessControlBlock;
 
 
@@ -93,6 +131,11 @@ INT32					IsMyMessageInArray(Message *head[], INT32 process_id, Message *inbox, 
 void					AddToMsgSuspendList(ProcessControlBlock **head, ProcessControlBlock *pcb);
 INT32					IsNewSendMsgInArray(Message *head[], INT32 target_pid,  INT32 source_pid, Message *inbox, INT32 num_messages);
 
-INT16					FindLastOccupiedFrame(PageFrameMapping *head);
 void					AddToMappingTableList(PageFrameMapping **head, PageFrameMapping *pfm, INT16 assignedFrame );
 BOOL					IsMappingListEmpty(PageFrameMapping *head);
+void					AddToDiskQueue(ProcessControlBlock **head, ProcessControlBlock *pcb);
+ProcessControlBlock		*DeQueueWithDiskId(ProcessControlBlock **head, INT32 disk_id);
+void					AddToDataWrittenQueue(Disk **head, Disk *data);
+Disk*					GetDataWithInfo(Disk *head, INT32 disk_id, INT32 sector);
+Disk*					GetDataWithInfoPid(Disk *head, INT32 disk_id, INT32 sector, INT32 pid);
+void					AddToShadowTable(ShadowTable **head, ShadowTable *newEntry, INT32 *countEntry);

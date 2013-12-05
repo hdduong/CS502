@@ -1360,6 +1360,7 @@ void test2b(void) {
 
 #define         DISPLAY_GRANULARITY2c           10
 #define         TEST2C_LOOPS                    50
+//#define         TEST2C_LOOPS                    2
 
 typedef union {
 	char char_data[PGSIZE ];
@@ -1397,6 +1398,8 @@ void test2c(void) {
 		// Now read back the same data.  Note that we assume the
 		// disk_id and sector have not been modified by the previous
 		// call.
+		//data_read->int_data[2] = 101;
+
 		DISK_READ(disk_id, sector, (char* )(data_read->char_data));
 
 		if ((data_read->int_data[0] != data_written->int_data[0])
@@ -1404,6 +1407,7 @@ void test2c(void) {
 				|| (data_read->int_data[2] != data_written->int_data[2])
 				|| (data_read->int_data[3] != data_written->int_data[3])) {
 			printf("AN ERROR HAS OCCURRED.\n");
+			//printf("error: read 1: %d --- write: %d  --- PID_read: %d  ---PID_write: %d --- disk_read:%d --- disk_write:%d  \n ",data_read->int_data[2],data_written->int_data[2],data_read->int_data[3],data_written->int_data[3],data_read->int_data[0],data_written->int_data[0]);
 		} else if (Z502_REG6 % DISPLAY_GRANULARITY2c == 0) {
 			printf("SUCCESS READING  PID= %ld  disk_id =%ld, sector = %ld\n",
 					Z502_REG4, disk_id, sector);
@@ -1423,13 +1427,25 @@ void test2c(void) {
 		data_written->int_data[2] = sector;
 		data_written->int_data[3] = Z502_REG4;
 
+		//printf("before read 2: read: %d --- write: %d  --- PID_read: %d  ---PID_write: %d --- disk_read:%d --- disk_write:%d  \n ",data_read->int_data[2],data_written->int_data[2],data_read->int_data[3],data_written->int_data[3],data_read->int_data[0],data_written->int_data[0]);
+
+		//if ((data_read->int_data[2] == 1062) && ( data_written->int_data[2] == 774) || 
+		//	(data_read->int_data[2] == 998) && ( data_written->int_data[2] == 646)
+		//	) {
+		//	printf("need to debug");
+		//}
 		DISK_READ(disk_id, sector, (char* )(data_read->char_data));
+
+		//printf("after read 2: read: %d --- write: %d  --- PID_read: %d  ---PID_write: %d --- disk_read:%d --- disk_write:%d  \n ",data_read->int_data[2],data_written->int_data[2],data_read->int_data[3],data_written->int_data[3],data_read->int_data[0],data_written->int_data[0]);
 
 		if ((data_read->int_data[0] != data_written->int_data[0])
 				|| (data_read->int_data[1] != data_written->int_data[1])
 				|| (data_read->int_data[2] != data_written->int_data[2])
 				|| (data_read->int_data[3] != data_written->int_data[3])) {
 			printf("AN ERROR HAS OCCURRED.\n");
+
+			//printf("error: read 2: %d --- write: %d  --- PID_read: %d  ---PID_write: %d --- disk_read:%d --- disk_write:%d  \n ",data_read->int_data[2],data_written->int_data[2],data_read->int_data[3],data_written->int_data[3],data_read->int_data[0],data_written->int_data[0]);
+
 		} else if (Z502_REG6 % DISPLAY_GRANULARITY2c == 0) {
 			printf("SUCCESS READING  PID= %ld  disk_id =%ld, sector = %ld\n",
 					Z502_REG4, disk_id, sector);
@@ -1478,6 +1494,8 @@ void test2d(void) {
 
 	SLEEP(50000);
 
+	//SLEEP(100000); // hdduong 50000 * 2
+
 	TERMINATE_PROCESS(-2, &Z502_REG5);
 
 }                                   // End of test2d 
@@ -1509,6 +1527,13 @@ void test2e(void) {
 	STEP_SIZE) {
 		Z502_REG3 = PGSIZE * Iterations; // Generate address
 		Z502_REG1 = Z502_REG3 + Z502_REG4; // Generate data 
+
+		//debug
+		/*if (Z502_REG3 == 8192 ) {
+			printf("need to debug\n");
+		}*/
+		//debug
+
 		MEM_WRITE(Z502_REG3, &Z502_REG1); // Write the data
 
 		MEM_READ(Z502_REG3, &Z502_REG2); // Read back data
@@ -1526,20 +1551,30 @@ void test2e(void) {
 
 	// Now read back the data we've written and paged
 	printf("Reading back data: test 2e, PID %ld.\n", Z502_REG4);
-	for (Iterations = 0; Iterations < VIRTUAL_MEM_PGS; Iterations +=
+	for (Iterations = 0; Iterations <= VIRTUAL_MEM_PGS; Iterations +=
 	STEP_SIZE) {
-
+	//for (Iterations = 0; Iterations < 8; Iterations +=
+	//STEP_SIZE) {
 		Z502_REG3 = PGSIZE * Iterations; // Generate address
 		Z502_REG1 = Z502_REG3 + Z502_REG4; // Data expected
+		
+		//debug
+	/*	if ( (Z502_REG3 == 8192 ) || (Z502_REG3 == 0 ) ){
+			printf("need to debug\n");
+		}*/
+		//debug
+
 		MEM_READ(Z502_REG3, &Z502_REG2); // Read back data
 
-		if (Iterations % DISPLAY_GRANULARITY2e == 0)
+		
+		//if (Iterations % DISPLAY_GRANULARITY2e == 0)  //hdduong
 			printf("PID= %ld  address= %ld   written= %ld   read= %ld\n",
 					Z502_REG4, Z502_REG3, Z502_REG1, Z502_REG2);
 		if (Z502_REG2 != Z502_REG1) // Written = read?
-			printf("AN ERROR HAS OCCURRED.\n");
+			printf("2. AN ERROR HAS OCCURRED.\n"); //hdduong
 
 	}    // End of for loop
+	//TERMINATE_PROCESS(-1, &Z502_REG9); //hdduong
 }                                  // End of test2e    
 
 /**************************************************************************
@@ -1558,8 +1593,10 @@ void test2e(void) {
 
 #define                 NUMBER_OF_ITERATIONS            3
 #define                 LOOP_COUNT                    400
+//#define                 LOOP_COUNT                    3
 #define                 DISPLAY_GRANULARITY2          100
-#define                 LOGICAL_PAGES_TO_TOUCH       2 * PHYS_MEM_PGS
+//#define                 LOGICAL_PAGES_TO_TOUCH        2 * PHYS_MEM_PGS //128 hdduong
+#define                 LOGICAL_PAGES_TO_TOUCH        400  // not out of bound hdduong
 
 typedef struct {
 	INT16 page_touched[LOGICAL_PAGES_TO_TOUCH];
@@ -1578,6 +1615,12 @@ void test2f(void) {
 		for (Index = 0; Index < LOGICAL_PAGES_TO_TOUCH; Index++)
 			mtr->page_touched[Index] = 0;
 		for (Loops = 0; Loops < LOOP_COUNT; Loops++) {
+			//debug
+			/*printf("at loop %d\n",Loops);
+			if (Loops == 332) {
+				printf("");
+			}*/
+			//debug
 			// Get a random page number
 			get_skewed_random_number(&Z502_REG7, LOGICAL_PAGES_TO_TOUCH);
 			Z502_REG3 = PGSIZE * Z502_REG7; // Convert page to addr.
@@ -1588,16 +1631,22 @@ void test2f(void) {
 
 			// Read it back and make sure it's the same
 			MEM_READ(Z502_REG3, &Z502_REG2);
-			if (Loops % DISPLAY_GRANULARITY2 == 0)
+			//if (Loops % DISPLAY_GRANULARITY2 == 0) //hdduong
 				printf("PID= %ld  address= %ld   written= %ld   read= %ld\n",
 						Z502_REG4, Z502_REG3, Z502_REG1, Z502_REG2);
 			if (Z502_REG2 != Z502_REG1)
-				printf("AN ERROR HAS OCCURRED: READ NOT EQUAL WRITE.\n");
+				printf("1. AN ERROR HAS OCCURRED: READ NOT EQUAL WRITE.\n");
 
 			// Record in our data-base that we've accessed this page
 			mtr->page_touched[(short) Loops] = Z502_REG7;
 
 		}   // End of for Loops
+
+		printf ("Start to Read back data \n");
+
+		//debug 
+		//printf("at loop: %d\n",Iterations);
+		//debug
 
 		for (Loops = 0; Loops < LOOP_COUNT; Loops++) {
 
@@ -1607,17 +1656,26 @@ void test2f(void) {
 			Z502_REG3 = PGSIZE * Z502_REG6; // Convert page to addr.
 			Z502_REG1 = Z502_REG3 + Z502_REG4; // Expected read
 			MEM_READ(Z502_REG3, &Z502_REG2);
+			
+			//debug 
+			/*if (Iterations == 2) {
+				if (Z502_REG3 == 1072) {
+					printf("need to debug \n");
+				}
+			}*/
+			//debug 
 
-			if (Loops % DISPLAY_GRANULARITY2 == 0)
-				printf("PID= %ld  address= %ld   written= %ld   read= %ld\n",
+			//if (Loops % DISPLAY_GRANULARITY2 == 0)
+				printf("2. PID= %ld  address= %ld   written= %ld   read= %ld\n",
 						Z502_REG4, Z502_REG3, Z502_REG1, Z502_REG2);
 			if (Z502_REG2 != Z502_REG1)
-				printf("ERROR HAS OCCURRED: READ NOT SAME AS WRITE.\n");
+				printf("2. ERROR HAS OCCURRED: READ NOT SAME AS WRITE.\n");
 		}   // End of for Loops
 
 		// We've completed reading back everything
 		printf("TEST 2f, PID %ld, HAS COMPLETED %d ITERATIONS\n", Z502_REG4,
 				Iterations);
+				//NUMBER_OF_ITERATIONS); //hdduong
 	}   // End of for Iterations
 
 	TERMINATE_PROCESS(-1, &Z502_REG9);
@@ -1625,7 +1683,7 @@ void test2f(void) {
 }                                 // End of test2f
 
 /**************************************************************************
- Test1g
+ Test2g
 
  Tests multiple copies of test2f running simultaneously.
  Test2f runs these with the same priority in order to show
@@ -1644,8 +1702,13 @@ void test2f(void) {
 
 void test2g(void) {
 	static long    sleep_time = 1000;
+	
+	GET_PROCESS_ID("", &Z502_REG4, &Z502_REG5);
+	printf("\n\nRelease %s:Test 2d: Pid %ld\n", CURRENT_REL, Z502_REG4);
+	//printf("This is Release %s:  Test 2g\n", CURRENT_REL);
+	CHANGE_PRIORITY(-1, MOST_FAVORABLE_PRIORITY, &Z502_REG9);
 
-	printf("This is Release %s:  Test 2g\n", CURRENT_REL);
+	
 	CREATE_PROCESS("test2g_a", test2f, PRIORITY2G, &Z502_REG1, &Z502_REG9);
 	CREATE_PROCESS("test2g_b", test2f, PRIORITY2G, &Z502_REG2, &Z502_REG9);
 	CREATE_PROCESS("test2g_c", test2f, PRIORITY2G, &Z502_REG3, &Z502_REG9);

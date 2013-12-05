@@ -74,8 +74,8 @@ typedef         int                             BOOL;
         something that should be handed in with the project.
 ******************************************************************/
 
-#define         DO_DEVICE_DEBUG                 FALSE
-#define         DO_MEMORY_DEBUG                 FALSE
+#define         DO_DEVICE_DEBUG                 TRUE
+#define         DO_MEMORY_DEBUG                 TRUE
 
 
         /* Meaning of locations in a page table entry          */
@@ -131,6 +131,7 @@ typedef         int                             BOOL;
 #define         DISK_INTERRUPT                  (short)5
 #define         DISK_INTERRUPT_DISK1            (short)5
 #define         DISK_INTERRUPT_DISK2            (short)6
+
 /*      ... we could define other explicit names here           */
 
 #define         LARGEST_STAT_VECTOR_INDEX       DISK_INTERRUPT + \

@@ -3,6 +3,7 @@
 #include                 <memory.h>
 #include				 <string.h>
 
+
 #include				"student_queue.h"
 #include				"student_global.h"
 
@@ -52,6 +53,11 @@ ProcessControlBlock *CreateProcessControlBlockWithData(char *process_name, void 
 	pcb->inboxQueue = NULL;
 
 	memset(pcb->pcb_PageTable,0,sizeof(pcb->pcb_PageTable));				// the default value = 0 for all memeory spots 
+	pcb->disk_io.disk_id = -1;												// no use disk
+	pcb->disk_io.operation = 0;												// default read
+
+	pcb->flag = 0;
+
 	return pcb;
 
 }
@@ -1057,22 +1063,7 @@ INT32	IsNewSendMsgInArray(Message *head[], INT32 target_pid,  INT32 source_pid, 
 
 
 *********************************************************************************************************/
-INT16	FindLastOccupiedFrame(PageFrameMapping *head) {   // return next of last frame in the sequence // start from 0
-	PageFrameMapping	*tmp = head;
-	INT16				frameOccupied = 0;				//get the frame until now which is occupied
 
-	if (IsMappingListEmpty(head)) {
-		return 0;
-	}
-
-	while (tmp->nextPFM != NULL) {
-		tmp = tmp->nextPFM;
-	}													// out of loop we have the last mappimg
-
-	frameOccupied = tmp->frame;
-
-	return frameOccupied + 1;
-}
 
 
 BOOL IsMappingListEmpty(PageFrameMapping *head)
@@ -1111,3 +1102,157 @@ void AddToMappingTableList(PageFrameMapping **head, PageFrameMapping *pfm, INT16
 	pfm->nextPFM = NULL;								// reset linker
 
 }
+
+void AddToDiskQueue(ProcessControlBlock **head, ProcessControlBlock *pcb)
+{
+	ProcessControlBlock *tmp;
+	ProcessControlBlock *prev;
+	
+	if (IsQueueEmpty(*head)) 
+	{
+		*head = pcb;
+		(*head)->nextPCB = NULL;
+		return;
+	}		
+
+	tmp = *head;
+	while (tmp != NULL) {
+		prev = tmp;
+		tmp = tmp->nextPCB;
+	}
+	prev->nextPCB = pcb;								// insert in the Middle & End	
+	pcb->nextPCB = tmp;
+
+}
+
+
+ProcessControlBlock *DeQueueWithDiskId(ProcessControlBlock **head, INT32 disk_id)
+{
+	ProcessControlBlock *tmp = *head;
+	ProcessControlBlock *prev = NULL;
+
+	if (IsQueueEmpty(*head)) 
+	{
+		return NULL;
+	}
+	
+	while (tmp != NULL) {
+		if ( (tmp->disk_io.disk_id == disk_id) ) { // && (tmp->state != PROCESS_STATE_TERMINATE) 
+			//First one
+			if (tmp == *head) {
+				*head = tmp->nextPCB;
+				tmp->nextPCB = NULL;
+				return tmp;
+			}
+			// last one 
+			else if (tmp->nextPCB == NULL) {
+				prev->nextPCB = NULL;
+				return tmp;
+			}
+			else { // middile
+				prev->nextPCB = tmp->nextPCB;
+				tmp->nextPCB = NULL;
+				return tmp;
+			}
+
+		}
+		prev = tmp;
+		tmp = tmp->nextPCB;
+	}
+
+	if ( (tmp == NULL)  &&(prev != NULL) )
+		return NULL;
+}
+
+
+void AddToDataWrittenQueue(Disk **head, Disk *data)
+{
+	Disk *tmp;
+	Disk *prev;
+	
+	if (*head == NULL)
+	{
+		*head = data;
+		(*head)->nextData = NULL;
+		return;
+	}		
+
+	tmp = *head;
+	while (tmp != NULL) {
+		prev = tmp;
+		tmp = tmp->nextData;
+	
+	}
+	prev->nextData = data;								// insert to end	
+	data->nextData = tmp;
+
+}
+
+
+Disk* GetDataWithInfo(Disk *head, INT32 disk_id, INT32 sector)
+{
+	Disk *tmp = head;
+	Disk *prev = NULL;
+
+	if (head == NULL)
+	{
+		return NULL;
+	}
+	
+	while (tmp != NULL) {
+		if ( (tmp->disk_id == disk_id)  && (tmp->sector == sector) ) { 
+			return tmp;
+		}
+		prev = tmp;
+		tmp = tmp->nextData;
+	}
+
+	if ( (tmp == NULL)  &&(prev != NULL) )
+		return NULL;
+}
+
+
+Disk* GetDataWithInfoPid(Disk *head, INT32 disk_id, INT32 sector, INT32 pid)
+{
+	Disk *tmp = head;
+	Disk *prev = NULL;
+
+	if (head == NULL)
+	{
+		return NULL;
+	}
+	
+	while (tmp != NULL) {
+		if ( (tmp->disk_id == disk_id)  && (tmp->sector == sector) && (tmp->process_id == pid) ) { 
+			return tmp;
+		}
+		prev = tmp;
+		tmp = tmp->nextData;
+	}
+
+	if ( (tmp == NULL)  &&(prev != NULL) )
+		return NULL;
+}
+
+
+
+void AddToShadowTable(ShadowTable **head, ShadowTable *newEntry, INT32 *countEntry) {
+	ShadowTable *tmp = (*head);
+	*countEntry = *countEntry + 1;
+
+	newEntry->shadow_id = *countEntry;
+
+	if (tmp == NULL) {
+		(*head) = newEntry;
+		return;
+	}
+
+	while (tmp->next != NULL) {
+		tmp = tmp->next;
+	}
+	tmp->next = newEntry;
+
+}
+
+
+
