@@ -1404,7 +1404,7 @@ void HardwareInterrupt(void) {
 					TimeToWaitForCondition, "HardwareInterrupt");
 			ReleaseLock(InterruptLock, "HardwareInterrupt-1");
 			GetNextEventTime(&time_of_event);
-			// PrintEventQueue( );
+			PrintEventQueue( );
 #ifdef DEBUG_CONDITION
 			printf("Hardware_Interrupt: time = %d: next event = %d\n",
 					CurrentSimulationTime, time_of_event);

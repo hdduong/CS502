@@ -283,7 +283,7 @@ void    interrupt_handler( void ) {
 
 			if (PCB_Transfer_Disk_To_Ready == NULL)  {
 				//debug
-				//printf("@interrupt_hanlder NULL at disk queue.\n");
+				printf("@interrupt_hanlder NULL at disk queue.\n");
 				//debug
 				disk_lock = FALSE;
 				interrupt_lock = FALSE;
@@ -293,14 +293,14 @@ void    interrupt_handler( void ) {
 				return;
 			}
 			//debug
-			//printf("Interrupt for Pid = %d  ",PCB_Transfer_Disk_To_Ready->process_id);
+			printf("Interrupt for Pid = %d --",PCB_Transfer_Disk_To_Ready->process_id);
 			//debug
 			MEM_WRITE( Z502DiskSetID, &disk_index);
 			MEM_READ( Z502DiskStatus, &tmpWR);				 //check the disk status
 
 			if (tmpWR == DEVICE_FREE) {
 			//debug	
-			//printf("@interrupt_handler: device free \n");
+			printf("@interrupt_handler: device free \n");
 			//debug
 			CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_Disk_To_Ready) );
 
@@ -358,6 +358,8 @@ void    fault_handler( void )
 	PageFrameMapping	*previousPFM = NULL;									// used in invalid memeory
 	char				data[PGSIZE];
 
+	INT32				tmpWR;
+
     // Get cause of interrupt
     MEM_READ(Z502InterruptDevice, &device_id );
     // Set this device as target of our query
@@ -379,8 +381,117 @@ void    fault_handler( void )
 		//transfer_from_fault = TRUE;
 		//interrupt_handler();
 		printf("Violating PRIVILEGED_INSTRUCTION... Exiting\n");
-		CALL(Z502Halt());
+		//CALL(Z502Halt());
 		//dispatcher();
+		//CALL(Z502Idle());
+
+
+		// try to fix the problem 
+		// 1. dequeue from diskqueue
+		// 2. let process to run and put into ready queue
+
+		CALL (LockDiskQueue(&disk_queue_lock));
+			//PCB_Transfer_Disk_To_Ready = NULL; //reset
+		PCB_Transfer_Disk_To_Ready = DeQueue(&DiskQueueHead);							// take off front Disk queue
+		CALL (UnLockDiskQueue(&disk_queue_lock));
+
+			if (PCB_Transfer_Disk_To_Ready == NULL)  {
+				//debug
+				printf("@fault_interrupt_hanlder NULL at disk queue.\n");
+				//debug
+				disk_lock = FALSE;
+				interrupt_lock = FALSE;
+	
+				//if (DiskQueueHead == NULL) {
+					CALL(LockReady(&ready_queue_result) );
+					while(ReadyQueueHead != NULL)  {
+				
+					//PCB_Transfer_Disk_To_Ready = NULL; //reset
+						PCB_Transfer_Disk_To_Ready = DeQueue(&ReadyQueueHead);							// take off front Disk queue
+				
+						CALL(LockDiskQueue(&disk_queue_lock));
+						CALL(AddToDiskQueue(&DiskQueueHead,PCB_Transfer_Disk_To_Ready));
+						CALL(UnLockDiskQueue(&disk_queue_lock));
+
+					}
+					CALL(UnLockReady(&ready_queue_result) );
+				//}
+				//else {
+				//	while(DiskQueueHead != NULL)  {
+				//	CALL (LockDiskQueue(&disk_queue_lock));
+				//		//PCB_Transfer_Disk_To_Ready = NULL; //reset
+				//	PCB_Transfer_Disk_To_Ready = DeQueue(&DiskQueueHead);							// take off front Disk queue
+				//	CALL (UnLockDiskQueue(&disk_queue_lock));
+				//	CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_Disk_To_Ready) );
+				//	}
+			//}
+
+				MEM_WRITE(Z502InterruptClear, &Index );
+	
+				return;
+			}
+			//debug
+			printf("Interrupt of fault for Pid = %d --",PCB_Transfer_Disk_To_Ready->process_id);
+			//debug
+			MEM_WRITE( Z502DiskSetID, &PCB_Transfer_Disk_To_Ready->disk_io.disk_id);
+			MEM_READ( Z502DiskStatus, &tmpWR);				 //check the disk status
+
+			while( tmpWR != DEVICE_FREE ){
+				CALL( Z502Idle() );            //for here the process only wait the disk until it free
+				CALL( MEM_WRITE( Z502DiskSetID, &PCB_Transfer_Disk_To_Ready->process_id) );       
+				CALL( MEM_READ( Z502DiskStatus, &tmpWR ) );
+			}
+
+			if (tmpWR == DEVICE_FREE) {
+			//debug	
+			printf("@interrupt_handler: device free \n");
+			//debug
+			CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_Disk_To_Ready) );
+
+			switch (PCB_Transfer_Disk_To_Ready->flag ) {
+				case NOT_WRITE_YET:
+					PCB_Transfer_Disk_To_Ready->disk_io.operation = 1;
+					CALL(start_disk(PCB_Transfer_Disk_To_Ready->disk_io.disk_id,
+									PCB_Transfer_Disk_To_Ready->disk_io.sector,
+									PCB_Transfer_Disk_To_Ready->disk_io.buffer,
+									PCB_Transfer_Disk_To_Ready->disk_io.operation) );
+					break;
+
+				case NOT_READ_YET:
+					PCB_Transfer_Disk_To_Ready->disk_io.operation = 0;
+					CALL(start_disk(PCB_Transfer_Disk_To_Ready->disk_io.disk_id,
+									PCB_Transfer_Disk_To_Ready->disk_io.sector,
+									PCB_Transfer_Disk_To_Ready->disk_io.buffer,
+									PCB_Transfer_Disk_To_Ready->disk_io.operation) );
+					break;
+
+				}
+			}
+	   /*
+			if (DiskQueueHead == NULL) {
+				CALL(LockReady(&ready_queue_result) );
+				while(ReadyQueueHead != NULL)  {
+				
+				//PCB_Transfer_Disk_To_Ready = NULL; //reset
+					PCB_Transfer_Disk_To_Ready = DeQueue(&ReadyQueueHead);							// take off front Disk queue
+				
+					CALL(LockDiskQueue(&disk_queue_lock));
+					CALL(AddToDiskQueue(&DiskQueueHead,PCB_Transfer_Disk_To_Ready));
+					CALL(UnLockDiskQueue(&disk_queue_lock));
+				}
+				CALL(UnLockReady(&ready_queue_result) );
+			}
+			else {
+				while(DiskQueueHead != NULL)  {
+				CALL (LockDiskQueue(&disk_queue_lock));
+					//PCB_Transfer_Disk_To_Ready = NULL; //reset
+				PCB_Transfer_Disk_To_Ready = DeQueue(&DiskQueueHead);							// take off front Disk queue
+				CALL (UnLockDiskQueue(&disk_queue_lock));
+				CALL( make_ready_to_run(&ReadyQueueHead, PCB_Transfer_Disk_To_Ready) );
+			}
+		}
+		*/
+
 		break;
 	case INVALID_PHYSICAL_MEMORY:
 		break;
@@ -919,9 +1030,9 @@ void    osInit( int argc, char *argv[]  ) {
 
 	//CALL ( os_create_process("test2e",(void*) test2e,test_case_prioirty, &created_process_id, &created_process_error) );
 
-	CALL ( os_create_process("test2f",(void*) test2f,test_case_prioirty, &created_process_id, &created_process_error) );
+	//CALL ( os_create_process("test2f",(void*) test2f,test_case_prioirty, &created_process_id, &created_process_error) );
 
-	//CALL ( os_create_process("test2g",(void*) test2g,test_case_prioirty, &created_process_id, &created_process_error) );
+	CALL ( os_create_process("test2g",(void*) test2g,test_case_prioirty, &created_process_id, &created_process_error) );
 }                                               // End of osInit
 
 
@@ -2338,7 +2449,7 @@ void write_disk(INT32 disk_id, INT32 sector, char data[PGSIZE])   //disk write,h
     {
 		INT32 operation = 1;		
 		//debug
-		//printf("free @ write_disk: pid: %d -- disk_id: %d -- sector: %d\n",PCB_Current_Running_Process->process_id,disk_id,sector);
+		printf("free @ write_disk: pid: %d -- disk_id: %d -- sector: %d\n",PCB_Current_Running_Process->process_id,disk_id,sector);
 		//debug
 		CALL(start_disk(disk_id,sector,data,operation) );   //begin work
 		
@@ -2349,7 +2460,7 @@ void write_disk(INT32 disk_id, INT32 sector, char data[PGSIZE])   //disk write,h
     }
    
 	//debug
-	//printf("busy @ write_disk: pid: %d -- disk_id: %d -- sector: %d\n",PCB_Current_Running_Process->process_id,disk_id,sector);
+	printf("busy @ write_disk: pid: %d -- disk_id: %d -- sector: %d\n",PCB_Current_Running_Process->process_id,disk_id,sector);
 	//debug
 
 	CALL(LockDiskQueue(&disk_queue_lock));
@@ -2376,7 +2487,7 @@ void read_disk(INT32 disk_id, INT32 sector, char data[PGSIZE])   //disk read,han
     if ( temp == DEVICE_FREE ) {   //begin work
 		INT32 operation = 0;
         //debug
-		//printf("free @ read_disk: pid: %d -- disk_id: %d -- sector: %d\n",PCB_Current_Running_Process->process_id,disk_id,sector);
+		printf("free @ read_disk: pid: %d -- disk_id: %d -- sector: %d\n",PCB_Current_Running_Process->process_id,disk_id,sector);
 		//debug
 
 		CALL(start_disk(disk_id, sector, data, operation) );
@@ -2387,7 +2498,7 @@ void read_disk(INT32 disk_id, INT32 sector, char data[PGSIZE])   //disk read,han
 	
 	
 	//debug
-	//printf("busy @ read_disk: pid: %d -- disk_id: %d -- sector: %d\n",PCB_Current_Running_Process->process_id,disk_id,sector);
+	printf("busy @ read_disk: pid: %d -- disk_id: %d -- sector: %d\n",PCB_Current_Running_Process->process_id,disk_id,sector);
 	//debug
 	CALL(LockDiskQueue(&disk_queue_lock));
 	PCB_Current_Running_Process->flag = NOT_READ_YET;
@@ -2418,12 +2529,12 @@ void start_disk(INT32 disk_id, INT32 sector, char data[PGSIZE], INT32 operation)
     MEM_WRITE( Z502DiskStart, &temp );
 
 	// debug
-	/*if (operation == 0) {
+	if (operation == 0) {
 		printf("read @ start_disk: disk_id: %d, sector %d\n", disk_id,sector);
 	} else if (operation == 1) {
 		
 		printf("write @ start_disk: disk_id: %d, sector %d\n", disk_id,sector);
-	}*/
+	}
 	// debug
 }
 
@@ -2566,13 +2677,13 @@ void mem_to_disk(INT32 frame, INT32	logicalPageRequest, INT32 victim_pid) {
 	
 	CALL( MEM_WRITE( Z502DiskSetID, &DISK) );
 	CALL( MEM_READ( Z502DiskStatus, &tmp ) );
-
+	/*
     while( tmp != DEVICE_FREE ){
         CALL( Z502Idle() );            //for here the process only wait the disk until it free
         CALL( MEM_WRITE( Z502DiskSetID, &DISK) );       
         CALL( MEM_READ( Z502DiskStatus, &tmp ) );
     }
-
+	*/
 	//CALL(LockDiskQueue(&disk_queue_lock));
 	//CALL(AddToDiskQueue(&DiskQueueHead, PCB_Current_Running_Process) );
 	//CALL(UnLockDiskQueue(&disk_queue_lock));
@@ -2643,12 +2754,13 @@ void disk_to_mem(INT32 frame, INT32 logicalPageRequest) {
 			
 			CALL( MEM_WRITE( Z502DiskSetID, &DISK) );
 			CALL( MEM_READ( Z502DiskStatus, &tmp ) );
-
+			
             while( tmp != DEVICE_FREE ){
                 CALL( Z502Idle() );            //for here the process only wait the disk until it free
                 CALL( MEM_WRITE( Z502DiskSetID, &DISK) );       
                 CALL( MEM_READ( Z502DiskStatus, &tmp ) );
             }
+			
             
 /*				CALL(LockDiskQueue(&disk_queue_lock));
 			CALL(AddToDiskQueue(&DiskQueueHead, PCB_Current_Running_Process) );
